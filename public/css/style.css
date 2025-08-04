@@ -1,0 +1,121 @@
+body {
+    font-family: sans-serif;
+    background: #f0f0f0;
+    padding: 20px;
+    max-width: 900px;
+    /* Aumentei para caber a tabela com várias rodadas */
+    margin: auto;
+}
+
+h1 {
+    text-align: center;
+}
+
+.section {
+    margin-bottom: 20px;
+}
+
+.section label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+}
+
+input[type="number"],
+input[type="text"] {
+    width: 80px;
+    /* Deixei mais compacto pro caso de muitos jogadores/rodadas */
+    padding: 5px;
+    margin: 2px;
+    text-align: center;
+    /* Centraliza o texto dentro dos inputs */
+}
+
+button {
+    padding: 10px 20px;
+    font-size: 16px;
+    display: block;
+    margin: 20px auto;
+    /* Centraliza o botão */
+}
+
+#resultado {
+    margin-top: 20px;
+    font-size: 20px;
+    font-weight: bold;
+    text-align: center;
+}
+
+/* Novo: Deixa a tabela centralizada e com bordas visíveis */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+    background: white;
+}
+
+table th,
+table td {
+    border: 1px solid #ccc;
+    padding: 8px;
+    text-align: center;
+    vertical-align: middle;
+}
+
+/* Para destacar o cabeçalho */
+table thead {
+    background-color: #e9ecef;
+    font-weight: bold;
+}
+
+/* Se quiser, pode também adicionar um leve sombreamento */
+table tbody tr:nth-child(even) {
+    background-color: #f8f9fa;
+}
+
+.tabelaAgricola {
+    margin: 0 auto;
+    overflow-x: auto;
+    background-color: rgb(255, 255, 255);
+    /* border-radius: 8px; */
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    position: relative;
+}
+
+/* Deixa a última coluna fixa (sticky) */
+th:last-child,
+td:last-child {
+    position: sticky;
+    right: 0;
+    background-color: white;
+    /* Garante que não fique transparente quando scrollar */
+    box-shadow: -2px 0 5px rgba(0, 0, 0, 0.1);
+    /* Sombra leve pra destacar a coluna */
+    z-index: 2;
+    /* Pra sobrepor as outras colunas ao rolar */
+    min-width: 80px;
+}
+
+/* Deixa a última coluna fixa (sticky) */
+th:first-child,
+td:first-child {
+    position: sticky;
+    left: 0;
+    background-color: white;
+    /* Garante que não fique transparente quando scrollar */
+    box-shadow: -2px 0 5px rgba(0, 0, 0, 0.1);
+    /* Sombra leve pra destacar a coluna */
+    z-index: 2;
+    /* Pra sobrepor as outras colunas ao rolar */
+    min-width: 80px;
+}
+
+/* Faz a primeira coluna sticky acompanhar a zebra */
+/* tbody tr:nth-child(even) td:first-child {
+    background-color: #f8f9fa;
+} */
+
+/* Faz a última coluna sticky também acompanhar a zebra */
+/* tbody tr:nth-child(even) td:last-child {
+    background-color: #f8f9fa;
+} */
