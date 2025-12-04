@@ -74,12 +74,10 @@ async function replicateRecurringTransactions(year, month) {
             const targetEndDate = new Date(Date.UTC(year, month, 1));
 
             // 1. BUSCA: Transações recorrentes ORIGINAIS (ROOT) inseridas em qualquer mês anterior.
-            // 💡 NOVO FILTRO: isSuperseded: { $ne: true } -> Garante que o modelo não foi substituído
             const recurringModels = await transactionsCollection.find({
                 date: { $lt: targetStartDate }, // Transações anteriores ao mês alvo
                 isRecurrent: true,
-                replicatedFromId: { $exists: false }, // APENAS modelos originais (ROOT)
-                isSuperseded: { $ne: true } // Ignora modelos que foram desativados
+                replicatedFromId: { $exists: false } // APENAS modelos originais (ROOT)
             }).toArray();
             
             if (recurringModels.length === 0) {
@@ -165,7 +163,7 @@ connectDB();
 
 
 // --- ROTA 1: Resumo Mensal (GET /api/summary) ---
-// ... (código resumido, não alterado) ...
+// Calcula o total de receitas e despesas por categoria para um dado mês/ano.
 app.get('/api/summary', async (req, res) => {
     if (!transactionsCollection) {
         return res.status(503).json({ error: "Servidor indisponível: Conexão DB falhou." });
@@ -225,7 +223,7 @@ app.get('/api/summary', async (req, res) => {
 
 
 // --- ROTA 2: Detalhamento por Categoria (GET /api/breakdown) ---
-// ... (código resumido, não alterado) ...
+// Retorna a lista de despesas por categoria, ideal para o gráfico de pizza.
 app.get('/api/breakdown', async (req, res) => {
     if (!transactionsCollection) {
         return res.status(503).json({ error: "Servidor indisponível: Conexão DB falhou." });
@@ -306,216 +304,15 @@ app.post('/api/transactions', async (req, res) => {
     }
 });
 
-
-// --- ROTA 4: Edição de Transação (PUT /api/transactions/:id) ---
-app.put('/api/transactions/:id', async (req, res) => {
-    if (!transactionsCollection) {
-        return res.status(503).json({ error: "Servidor indisponível: Conexão DB falhou." });
-    }
-
-    const { id } = req.params;
-    const { description, value, date, type, category, isRecurrent } = req.body;
-
-    if (!description || !value || !date || !type || !category) {
-        return res.status(400).json({ error: "Todos os campos são obrigatórios." });
-    }
-
-    // Garante que o ID é um ObjectId válido
-    let objectId;
-    try {
-        objectId = new ObjectId(id);
-    } catch (e) {
-        return res.status(400).json({ error: "ID de transação inválido." });
-    }
-    
-    // Converte a data para UTC 
-    const dateOnly = date.substring(0, 10);
-    const utcDate = new Date(dateOnly + 'T00:00:00Z'); 
-    
-    const updatedFields = {
-        description,
-        value: parseFloat(value),
-        date: utcDate,
-        type: type.toUpperCase(),
-        category,
-        isRecurrent: !!isRecurrent,
-    };
-
-    // Objeto para armazenar operações de remoção de campo (unset)
-    const unsetFields = {};
-
-    try {
-        // 1. Busca a transação antiga para obter o ID ROOT original, se houver
-        const oldTransaction = await transactionsCollection.findOne({ _id: objectId });
-
-        if (!oldTransaction) {
-            return res.status(404).json({ error: "Transação não encontrada." });
-        }
-
-        // 2. Lógica para EDITAR E QUEBRAR A CADEIA DE RECORRÊNCIA
-        if (updatedFields.isRecurrent) {
-            
-            // Determina qual é o ID ROOT original
-            const rootId = oldTransaction.replicatedFromId;
-            
-            // Se esta for uma réplica (tem rootId), o modelo ROOT antigo deve ser DESATIVADO
-            if (rootId) {
-                // 2.1. Desativa o modelo ROOT original para que ele não gere mais réplicas
-                await transactionsCollection.updateOne(
-                    { _id: rootId },
-                    { $set: { isSuperseded: true } }
-                );
-                console.log(`[Recorrência - Edição] Modelo ROOT antigo ${rootId} desativado (isSuperseded: true).`);
-                
-                // 2.2. Deleta TODAS as réplicas futuras (do próximo mês em diante)
-                const deleteResult = await transactionsCollection.deleteMany({
-                    replicatedFromId: rootId, 
-                    date: { $gt: utcDate } // Deleta estritamente futuras
-                });
-                console.log(`[Recorrência - Edição] Deletadas ${deleteResult.deletedCount} réplicas futuras que apontavam para o ROOT antigo.`);
-
-                // 2.3. Transação editada se torna o NOVO ROOT.
-                // 💡 CORREÇÃO AQUI: Remove o campo replicatedFromId do documento no banco.
-                unsetFields.replicatedFromId = ""; // Usa $unset para remover explicitamente o campo
-                delete updatedFields.replicatedFromId; // Remove da operação $set
-            } else if (oldTransaction.isRecurrent) {
-                // O usuário está editando o ROOT original diretamente.
-                // Deletamos apenas as réplicas futuras (do próximo mês em diante)
-                const nextMonth = new Date(utcDate.getFullYear(), utcDate.getMonth() + 1, 1);
-                
-                const deleteResult = await transactionsCollection.deleteMany({
-                    replicatedFromId: oldTransaction._id,
-                    date: { $gte: nextMonth }
-                });
-                 console.log(`[Recorrência - Edição] Deletadas ${deleteResult.deletedCount} réplicas futuras do ROOT original.`);
-            }
-
-        } else {
-            // Se isRecurrent se tornou FALSE, o item é tratado como transação única.
-            if (oldTransaction.isRecurrent) {
-                const rootId = oldTransaction.replicatedFromId || oldTransaction._id;
-                // Deletamos todas as réplicas futuras.
-                await transactionsCollection.deleteMany({ 
-                    replicatedFromId: rootId,
-                    date: { $gte: utcDate } 
-                });
-                // Removemos o status de ROOT do item editado, se aplicável
-                unsetFields.replicatedFromId = ""; 
-                unsetFields.isSuperseded = "";
-                delete updatedFields.replicatedFromId;
-                delete updatedFields.isSuperseded;
-            }
-        }
-        
-        // 3. Executa a atualização do documento (incluindo as operações $set e $unset)
-        const updateOperations = { $set: updatedFields };
-        if (Object.keys(unsetFields).length > 0) {
-            updateOperations.$unset = unsetFields;
-        }
-
-        const result = await transactionsCollection.updateOne(
-            { _id: objectId },
-            updateOperations
-        );
-
-        if (result.matchedCount === 0) {
-            return res.status(404).json({ error: "Transação não encontrada após a busca inicial." });
-        }
-
-        res.json({
-            message: "Transação atualizada com sucesso. A cadeia de recorrência foi ajustada a partir desta data.",
-            modifiedCount: result.modifiedCount
-        });
-
-    } catch (error) {
-        console.error("Erro ao atualizar transação:", error);
-        res.status(500).json({ error: "Erro interno do servidor ao atualizar a transação." });
-    }
-});
-
-
-// --- ROTA 5: Exclusão de Transação (DELETE /api/transactions/:id) ---
-app.delete('/api/transactions/:id', async (req, res) => {
-    if (!transactionsCollection) {
-        return res.status(503).json({ error: "Servidor indisponível: Conexão DB falhou." });
-    }
-
-    const { id } = req.params;
-    
-    // Garante que o ID é um ObjectId válido
-    let objectId;
-    try {
-        objectId = new ObjectId(id);
-    } catch (e) {
-        return res.status(400).json({ error: "ID de transação inválido." });
-    }
-
-    try {
-        // 1. Busca a transação antes de deletar
-        const transaction = await transactionsCollection.findOne({ _id: objectId });
-
-        if (!transaction) {
-            return res.status(404).json({ error: "Transação não encontrada." });
-        }
-
-        // 2. Lógica para DELETAR E QUEBRAR A CADEIA DE RECORRÊNCIA
-        let deletedFutureCount = 0;
-
-        if (transaction.isRecurrent) {
-            const rootId = transaction.replicatedFromId || transaction._id;
-            
-            // Deleta todas as réplicas futuras (do mês seguinte ao mês deletado em diante)
-            const nextMonth = new Date(transaction.date.getFullYear(), transaction.date.getMonth() + 1, 1);
-            
-            const deleteFutureResult = await transactionsCollection.deleteMany({
-                $or: [
-                    { replicatedFromId: rootId, date: { $gte: nextMonth } },
-                    { _id: rootId, date: { $gte: nextMonth } } // Cobre o caso do ROOT ser deletado
-                ]
-            });
-            deletedFutureCount = deleteFutureResult.deletedCount;
-            
-            console.log(`[Recorrência - Exclusão] Deletadas ${deletedFutureCount} réplicas futuras para o ROOT: ${rootId}`);
-
-            // 💡 NOVO: Se o item deletado for uma réplica, o ROOT original deve ser reativado
-            if (transaction.replicatedFromId) {
-                 await transactionsCollection.updateOne(
-                    { _id: transaction.replicatedFromId },
-                    { $unset: { isSuperseded: "" } } // Remove a flag
-                );
-            }
-        }
-        
-        // 3. Deleta a transação atual
-        const result = await transactionsCollection.deleteOne({ _id: objectId });
-
-        if (result.deletedCount === 0) {
-            return res.status(404).json({ error: "Transação não encontrada durante a exclusão." });
-        }
-
-        res.json({
-            message: "Transação excluída com sucesso.",
-            deletedCount: result.deletedCount,
-            deletedFutureCount: deletedFutureCount
-        });
-
-    } catch (error) {
-        console.error("Erro ao excluir transação:", error);
-        res.status(500).json({ error: "Erro interno do servidor ao excluir a transação." });
-    }
-});
-
-
-// --- ROTA 6: Extrato Mensal Detalhado (GET /api/transactions/monthly-list) ---
+// --- ROTA 4: Extrato Mensal Detalhado (GET /api/transactions/monthly-list) ---
 app.get('/api/transactions/monthly-list', async (req, res) => {
-// ... (código resumido, não alterado) ...
     if (!transactionsCollection) {
         return res.status(503).json({ error: "Servidor indisponível: Conexão DB falhou." });
     }
 
     const { year, month } = req.query;
     if (!year || !month) {
-        return res.status(400).json({ error: "Parâmetros 'year' e 'month' (numéricos) são obrigatórios." });
+        return res.status(400).json({ error: "Parâmetros 'year' e 'month' são obrigatórios." });
     }
 
     const y = parseInt(year);
@@ -548,7 +345,7 @@ app.get('/api/transactions/monthly-list', async (req, res) => {
 });
 
 
-// --- ROTA 7: LIMPAR TODO O BANCO DE DADOS (DELETE /api/data/clean) ---
+// --- ROTA 5: LIMPAR TODO O BANCO DE DADOS (DELETE /api/data/clean) ---
 app.delete('/api/data/clean', async (req, res) => {
     if (!transactionsCollection) {
         return res.status(503).json({ error: "Servidor indisponível: Conexão DB falhou." });

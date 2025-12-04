@@ -1,121 +1,222 @@
-body {
-    font-family: sans-serif;
-    background: #f0f0f0;
-    padding: 20px;
-    max-width: 900px;
-    /* Aumentei para caber a tabela com várias rodadas */
-    margin: auto;
+/* --- Variáveis de Tema --- */
+:root {
+    --color-income: #28a745;    /* Verde para Receita */
+    --color-expense: #dc3545;   /* Vermelho para Despesa */
+    --color-balance: #007bff;   /* Azul primário */
+    --color-bg: #f8f9fa;        /* Fundo claro */
+    --color-text: #343a40;      /* Texto escuro */
+    --color-border: #e9ecef;    /* Borda suave */
 }
 
-h1 {
-    text-align: center;
+/* --- Estilos Gerais e Layout --- */
+body { 
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+    margin: 0;
+    padding: 30px;
+    background-color: var(--color-bg);
+    color: var(--color-text);
 }
 
-.section {
+.container { 
+    max-width: 1200px; 
+    margin: 0 auto; 
+}
+h1, h2 { 
+    border-bottom: 2px solid var(--color-border); 
+    padding-bottom: 10px; 
+    margin-top: 25px; 
+}
+
+/* --- Controles de Filtro (Navegação Mês/Ano) --- */
+#filter-controls {
+    display: flex;
+    align-items: center;
+    gap: 20px;
     margin-bottom: 20px;
+    padding: 15px;
+    background-color: white;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+#filter-controls button {
+    background-color: var(--color-balance);
+    color: white;
+    border: none;
+    padding: 8px 15px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+#filter-controls button:hover { background-color: #0056b3; }
+#current-month-display { font-size: 1.5em; font-weight: bold; }
+
+/* --- Cards de Resumo --- */
+#summary-container { 
+    display: flex; 
+    gap: 20px; 
+    margin-bottom: 40px; 
+}
+.summary-card { 
+    padding: 25px; 
+    border-radius: 8px; 
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1); 
+    flex: 1; 
+    text-align: center; 
+}
+.summary-card h3 { 
+    margin-top: 0; 
+    font-size: 1.2em; 
+    color: #6c757d; 
+}
+.summary-card p { 
+    font-size: 2.2em; 
+    font-weight: bold; 
+    margin: 5px 0 0; 
+}
+.card-income { 
+    background-color: #d4edda; 
+    border-bottom: 5px solid var(--color-income); 
+}
+.card-expense { 
+    background-color: #f8d7da; 
+    border-bottom: 5px solid var(--color-expense); 
+}
+.card-balance { 
+    background-color: #cce5ff; 
+    border-bottom: 5px solid var(--color-balance); 
+}
+.positive { color: var(--color-income); }
+.negative { color: var(--color-expense); }
+
+
+/* --- FORMULÁRIO DE REGISTRO (3 COLUNAS) --- */
+#registration-accordion { 
+    margin-top: 25px;
+    margin-bottom: 40px; /* Adiciona espaço após o formulário */
 }
 
-.section label {
-    display: block;
-    margin-bottom: 5px;
-    font-weight: bold;
+/* Cabeçalho do Acordeão */
+#form-toggle-header {
+    display: flex; 
+    align-items: center; 
+    justify-content: space-between; 
+    padding: 12px 15px; 
+    background-color: var(--color-balance); 
+    color: white; 
+    cursor: pointer; 
+    border-radius: 6px 6px 0 0; /* Apenas topo arredondado */
+}
+#form-toggle-header h2 {
+    margin: 0; 
+    color: white; 
+    border: none; 
+    padding-bottom: 0;
 }
 
-input[type="number"],
-input[type="text"] {
-    width: 80px;
-    /* Deixei mais compacto pro caso de muitos jogadores/rodadas */
-    padding: 5px;
-    margin: 2px;
-    text-align: center;
-    /* Centraliza o texto dentro dos inputs */
+/* Conteúdo do Formulário (O que é toggle) */
+#transaction-form-content { 
+    padding-top: 15px;
+    border: 1px solid var(--color-border);
+    border-top: none;
+    border-radius: 0 0 6px 6px;
+    background-color: white;
 }
 
-button {
-    padding: 10px 20px;
-    font-size: 16px;
-    display: block;
-    margin: 20px auto;
-    /* Centraliza o botão */
+/* O PRÓPRIO FORM: Configuração da Grade de 3 Colunas */
+#transaction-form { 
+    display: grid; 
+    grid-template-columns: repeat(3, 1fr); /* TRÊS COLUNAS IGUAIS */
+    gap: 8px 15px; 
+    padding: 0 15px 15px 15px; /* Padding interno */
+    box-shadow: none; /* Remove a sombra interna */
+    max-width: none; /* Deixa o formulário se expandir */
 }
 
-#resultado {
-    margin-top: 20px;
-    font-size: 20px;
-    font-weight: bold;
-    text-align: center;
-}
-
-/* Novo: Deixa a tabela centralizada e com bordas visíveis */
-table {
+/* Campos de Input */
+.input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
     width: 100%;
-    border-collapse: collapse;
-    margin-top: 20px;
-    background: white;
+}
+.input-group label { 
+    font-weight: bold; 
+    font-size: 0.9em; 
+}
+.input-group input, .input-group select { 
+    padding: 8px 10px; 
+    border: 1px solid var(--color-border); 
+    border-radius: 4px; 
+    width: 100%; 
+    box-sizing: border-box; 
+    font-size: 1em;
 }
 
-table th,
-table td {
-    border: 1px solid #ccc;
-    padding: 8px;
-    text-align: center;
-    vertical-align: middle;
+/* Recorrência (Ocupa 3 colunas) */
+#recurrence-field {
+    grid-column: 1 / span 3; 
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 0;
 }
 
-/* Para destacar o cabeçalho */
-table thead {
-    background-color: #e9ecef;
+/* Botão (Ocupa 3 colunas) */
+#transaction-form button { 
+    grid-column: 1 / span 3; /* Ocupa as três colunas */
+    padding: 12px; 
+    width: 100%;
+    background-color: var(--color-income); /* Usa verde para Salvar */
+    color: white;
+    border: none;
+    border-radius: 4px;
+    font-weight: bold;
+    cursor: pointer;
+}
+#transaction-form button:hover { background-color: #218838; }
+
+
+/* --- Tabelas (Extrato e Breakdown) --- */
+table { 
+    width: 100%; 
+    border-collapse: separate; 
+    border-spacing: 0; 
+    margin-top: 15px; 
+    border: 1px solid var(--color-border); 
+    border-radius: 6px;
+    overflow: hidden; 
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+#transaction-list-table thead th, 
+#expense-breakdown-table thead th { 
+    background-color: var(--color-balance); 
+    color: white; 
+    padding: 12px; 
+    text-align: left; 
+    font-size: 0.95em;
+}
+#transaction-list-table tbody td,
+#expense-breakdown-table tbody td { 
+    padding: 12px; 
+    border-bottom: 1px solid var(--color-border); 
+}
+#transaction-list-table tbody tr:nth-child(even),
+#expense-breakdown-table tbody tr:nth-child(even) {
+    background-color: #f8f8ff;
+}
+#transaction-list-table tbody tr:hover,
+#expense-breakdown-table tbody tr:hover {
+    background-color: #e9ecef; 
+}
+#transaction-list-table tbody td:last-child {
+    text-align: right;
     font-weight: bold;
 }
-
-/* Se quiser, pode também adicionar um leve sombreamento */
-table tbody tr:nth-child(even) {
-    background-color: #f8f9fa;
+#expense-breakdown-table tbody td:last-child {
+    text-align: right;
 }
 
-.tabelaAgricola {
-    margin: 0 auto;
-    overflow-x: auto;
-    background-color: rgb(255, 255, 255);
-    /* border-radius: 8px; */
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    position: relative;
+/* Botão de Limpeza */
+#reset-data-btn {
+    background-color: var(--color-expense) !important; 
 }
-
-/* Deixa a última coluna fixa (sticky) */
-th:last-child,
-td:last-child {
-    position: sticky;
-    right: 0;
-    background-color: white;
-    /* Garante que não fique transparente quando scrollar */
-    box-shadow: -2px 0 5px rgba(0, 0, 0, 0.1);
-    /* Sombra leve pra destacar a coluna */
-    z-index: 2;
-    /* Pra sobrepor as outras colunas ao rolar */
-    min-width: 80px;
-}
-
-/* Deixa a última coluna fixa (sticky) */
-th:first-child,
-td:first-child {
-    position: sticky;
-    left: 0;
-    background-color: white;
-    /* Garante que não fique transparente quando scrollar */
-    box-shadow: -2px 0 5px rgba(0, 0, 0, 0.1);
-    /* Sombra leve pra destacar a coluna */
-    z-index: 2;
-    /* Pra sobrepor as outras colunas ao rolar */
-    min-width: 80px;
-}
-
-/* Faz a primeira coluna sticky acompanhar a zebra */
-/* tbody tr:nth-child(even) td:first-child {
-    background-color: #f8f9fa;
-} */
-
-/* Faz a última coluna sticky também acompanhar a zebra */
-/* tbody tr:nth-child(even) td:last-child {
-    background-color: #f8f9fa;
-} */
