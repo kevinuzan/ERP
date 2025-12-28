@@ -187,8 +187,9 @@ function renderTransactionList(transactions) {
 
     transactions.forEach(t => {
         const row = tbody.insertRow();
+
         const date = new Date(t.date);
-        const formattedDate = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit' }).format(date);
+        const formattedDate = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', timeZone: 'UTC'}).format(date);
         
         const isReceita = t.type === 'RECEITA';
         const valueClass = isReceita ? 'text-green-600' : 'text-red-600';
