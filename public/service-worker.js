@@ -51,3 +51,24 @@ self.addEventListener('fetch', event => {
       .then(response => response || fetch(event.request))
   );
 });
+
+self.addEventListener('push', (event) => {
+    const data = event.data ? event.data.json() : { title: 'Aviso', body: 'Nova atualização!' };
+    
+    event.waitUntil(
+        self.registration.showNotification(data.title, {
+            body: data.body,
+            icon: '/img/icon-192.png', // Verifique se esse arquivo abre no seu navegador
+            vibrate: [100, 50, 100],
+            data: { url: '/' }
+        })
+    );
+});
+
+// Abre o app ao clicar na notificação
+self.addEventListener('notificationclick', function(event) {
+    event.notification.close();
+    event.waitUntil(
+        clients.openWindow(event.notification.data.url)
+    );
+});

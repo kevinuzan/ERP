@@ -28,6 +28,150 @@ app.get('/', function (req, res) {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
+
+import cron from 'node-cron';
+import webpush from 'web-push';
+
+// 1. Configure as chaves que você gerou no passo anterior
+const publicVapidKey = process.env.VAPID_PUBLIC_KEY;
+console.log(publicVapidKey)
+const privateVapidKey = process.env.VAPID_PRIVATE_KEY;
+webpush.setVapidDetails('mailto:uzankevin93@gmail.com', publicVapidKey, privateVapidKey);
+
+// 2. Array para guardar as inscrições (em produção, salve isso em uma collection no MongoDB)
+let pushSubscriptions = [];
+
+app.post('/api/subscribe', async (req, res) => {
+    const subscription = req.body;
+    try {
+        const client = new MongoClient(MONGO_URI);
+        const db = client.db(DB_NAME);
+        const subsCollection = db.collection('subscriptions');
+
+        // Evita duplicados (usa o endpoint como ID único)
+        await subsCollection.updateOne(
+            { endpoint: subscription.endpoint },
+            { $set: subscription },
+            { upsert: true }
+        );
+
+        res.status(201).json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+async function verificarVencimentos() {
+    try {
+        const client = new MongoClient(MONGO_URI);
+        const db = client.db(DB_NAME);
+        const transactionsColl = db.collection('transactions');
+        const subsCollection = db.collection('subscriptions');
+
+        // Pega a data de HOJE (zerando horas para comparar apenas o dia)
+        const hoje = new Date();
+        hoje.setHours(0, 0, 0, 0);
+
+        const despesas = await transactionsColl.find({ type: 'DESPESA' }).toArray();
+        const assinaturas = await subsCollection.find().toArray();
+
+        if (assinaturas.length === 0) return;
+
+        for (const despesa of despesas) {
+            const dataVenc = new Date(despesa.date);
+            dataVenc.setHours(0, 0, 0, 0);
+
+            // Calcula a diferença em milissegundos e converte para dias
+            const diffTime = dataVenc.getTime() - hoje.getTime();
+            const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+
+            let mensagem = "";
+            if (diffDays === 2) mensagem = `⏰ Conta chegando! "${despesa.description}" R$ ${despesa.value} vence em 2 dias.`;
+            else if (diffDays === 1) mensagem = `⚠️ Atenção: "${despesa.description}" R$ ${despesa.value} vence amanhã!`;
+            else if (diffDays === 0) mensagem = `💸 Vence HOJE: "${despesa.description}" R$ ${despesa.value}.`;
+            
+            console.log(mensagem)
+            if (mensagem) {
+                const payload = JSON.stringify({
+                    title: "Alerta de Vencimento",
+                    body: mensagem,
+                    url: "/"
+                });
+                // console.log(mensagem)
+                // Dispara para todos os dispositivos
+                // assinaturas.forEach(sub => {
+                //     webpush.sendNotification(sub, payload).catch(err => {
+                //         if (err.statusCode === 410) {
+                //             subsCollection.deleteOne({ endpoint: sub.endpoint });
+                //         }
+                //     });
+                // });
+                const envios = assinaturas.map(sub =>
+                    webpush.sendNotification(sub, payload).catch(err => {
+                        // Se a notificação falhar porque o token expirou (erro 410), removemos do banco
+                        if (err.statusCode === 410) {
+                            subsCollection.deleteOne({ endpoint: sub.endpoint });
+                        }
+                    })
+                );
+                await Promise.all(envios);
+            }
+        }
+        // console.log("✅ Varredura de 17:15 finalizada.");
+    } catch (error) {
+        console.error("❌ Erro no processamento do cron:", error);
+    }
+}
+
+// 4. Agenda para rodar todo dia às 08:00 da manhã
+cron.schedule('30 11 * * *', () => {
+    console.log("Executando verificação de vencimentos...");
+    verificarVencimentos();
+});
+
+// 4. Rota para você disparar a mensagem (O GATILHO)
+app.get('/api/send-notif', (req, res) => {
+    const payload = JSON.stringify({ title: "Finanças App", body: "Você recebeu uma atualização!" });
+
+    // Manda para todo mundo que acessou o site e aceitou o push
+    Promise.all(subscriptions.map(sub => webpush.sendNotification(sub, payload)))
+        .then(() => res.json({ success: true }))
+        .catch(err => res.status(500).json({ error: err.stack }));
+});
+app.get('/api/test-push', async (req, res) => {
+    try {
+        const client = new MongoClient(MONGO_URI);
+        const db = client.db(DB_NAME);
+        const subsCollection = db.collection('subscriptions');
+
+        // 1. Pega todas as assinaturas guardadas no banco
+        const allSubs = await subsCollection.find().toArray();
+
+        console.log(`Disparando para ${allSubs.length} dispositivos cadastrados.`);
+        await verificarVencimentos();
+        // const payload = JSON.stringify({
+        //     title: "Teste de Notificação",
+        //     body: "Se você recebeu isso, o banco de dados está funcionando!",
+        //     url: "/"
+        // });
+
+        // // 2. Envia para cada uma delas
+        // const envios = allSubs.map(sub =>
+        //     webpush.sendNotification(sub, payload).catch(err => {
+        //         // Se a notificação falhar porque o token expirou (erro 410), removemos do banco
+        //         if (err.statusCode === 410) {
+        //             subsCollection.deleteOne({ endpoint: sub.endpoint });
+        //         }
+        //     })
+        // );
+
+        // await Promise.all(envios);
+        res.json({ success: `Disparado para ${allSubs.length} dispositivos!` });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // --- CONEXÃO PERSISTENTE COM O MONGODB ---
 let transactionsCollection;
 
@@ -59,12 +203,12 @@ let replicationPromise = Promise.resolve(0);
  */
 async function replicateRecurringTransactions(year, month) {
     if (!transactionsCollection) return 0;
-    
+
     // Se já estiver replicando, espere a promessa atual ser resolvida
     if (isReplicating) {
         return replicationPromise;
     }
-    
+
     // Marca como em andamento e armazena a promessa de execução
     isReplicating = true;
     replicationPromise = (async () => {
@@ -81,7 +225,7 @@ async function replicateRecurringTransactions(year, month) {
                 replicatedFromId: { $exists: false }, // APENAS modelos originais (ROOT)
                 isSuperseded: { $ne: true } // Ignora modelos que foram desativados
             }).toArray();
-            
+
             if (recurringModels.length === 0) {
                 return 0;
             }
@@ -94,42 +238,42 @@ async function replicateRecurringTransactions(year, month) {
             }).project({ replicatedFromId: 1 }).toArray();
 
             const existingRootIds = new Set(existingReplicas.map(r => r.replicatedFromId.toString()));
-            
+
             // 2. REPLICA: Cria novas transações para o mês alvo
             const transactionsToInsert = [];
 
             for (const model of recurringModels) {
-                
+
                 // CHECAGEM RÁPIDA: Se o ID do modelo ROOT já está na lista de réplicas, pule.
                 if (existingRootIds.has(model._id.toString())) {
-                    continue; 
+                    continue;
                 }
-                
+
                 // --- 3. Geração da nova data ---
-                
+
                 // 1. Obter o dia do mês original de forma segura em UTC
                 const dayOfMonth = model.date.getUTCDate();
-                
+
                 // 2. Calcular o número de dias no mês ALVO
                 const daysInTargetMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
-                
+
                 // 3. Escolher o dia mais seguro: o dia original OU o último dia do mês alvo (Math.min)
                 const safeDay = Math.min(dayOfMonth, daysInTargetMonth);
 
                 // 4. Criar a data final em UTC.
                 const finalDate = new Date(Date.UTC(
-                    year, 
+                    year,
                     month - 1, // Mês alvo (0-indexado)
                     safeDay,   // Dia seguro (1-31)
-                    model.date.getUTCHours(), 
+                    model.date.getUTCHours(),
                     model.date.getUTCMinutes()
                 ));
 
                 // --- 4. Montagem da Transação ---
-                
+
                 // Clona o objeto, copiando apenas os campos necessários e definindo replicatedFromId
                 const newTransaction = {
-                    description: model.description, 
+                    description: model.description,
                     value: model.value,
                     type: model.type,
                     category: model.category,
@@ -138,14 +282,14 @@ async function replicateRecurringTransactions(year, month) {
                     date: finalDate, // Data corrigida
                     replicatedFromId: model._id, // Aponta para o modelo ROOT
                 };
-                
+
                 transactionsToInsert.push(newTransaction);
             }
 
             if (transactionsToInsert.length > 0) {
                 await transactionsCollection.insertMany(transactionsToInsert);
             }
-            
+
             return transactionsToInsert.length;
         } catch (error) {
             console.error("Erro na replicação de transações:", error);
@@ -155,7 +299,7 @@ async function replicateRecurringTransactions(year, month) {
             isReplicating = false;
         }
     })();
-    
+
     // Retorna a promessa para que ambas as rotas aguardem a conclusão
     return replicationPromise;
 }
@@ -178,7 +322,7 @@ app.get('/api/summary', async (req, res) => {
 
     const y = parseInt(year);
     const m = parseInt(month);
-    
+
     // 1. Checa e cria transações recorrentes antes de agregar (agora sincronizado)
     const insertedCount = await replicateRecurringTransactions(y, m);
     if (insertedCount > 0) {
@@ -194,7 +338,7 @@ app.get('/api/summary', async (req, res) => {
         const summary = await transactionsCollection.aggregate([
             { $match: { date: { $gte: startDate, $lt: endDate } } },
             { $group: { _id: { type: "$type", category: "$category" }, totalValue: { $sum: "$value" } } },
-            { 
+            {
                 $group: {
                     _id: "$_id.type",
                     total: { $sum: "$totalValue" },
@@ -238,23 +382,27 @@ app.get('/api/breakdown', async (req, res) => {
 
     const y = parseInt(year);
     const m = parseInt(month);
-    
+
     // 1. A REPLICAÇÃO JÁ É FEITA NA ROTA /api/summary, então apenas buscamos
-    
+
     // 2. Define o intervalo de datas em UTC para a busca
     const startDate = new Date(Date.UTC(y, m - 1, 1));
     const endDate = new Date(Date.UTC(y, m, 1));
 
     try {
         const breakdown = await transactionsCollection.aggregate([
-            { $match: { 
-                date: { $gte: startDate, $lt: endDate },
-                type: 'DESPESA', // Filtra apenas despesas para o gráfico
-            }},
-            { $group: {
-                _id: "$category",
-                total: { $sum: "$value" },
-            }},
+            {
+                $match: {
+                    date: { $gte: startDate, $lt: endDate },
+                    type: 'DESPESA', // Filtra apenas despesas para o gráfico
+                }
+            },
+            {
+                $group: {
+                    _id: "$category",
+                    total: { $sum: "$value" },
+                }
+            },
             { $sort: { total: -1 } }, // Ordena pelo maior valor
             { $project: { _id: 0, category: "$_id", total: 1 } }
         ]).toArray();
@@ -283,7 +431,7 @@ app.post('/api/transactions', async (req, res) => {
     // 🌟 CORREÇÃO DE DATA: Garante que a data é salva na meia-noite UTC (T00:00:00Z)
     // Isso garante que a transação modelo seja encontrada pelo filtro de recorrência.
     const dateOnly = date.substring(0, 10); // Pega apenas 'AAAA-MM-DD'
-    const utcDate = new Date(dateOnly + 'T00:00:00Z'); 
+    const utcDate = new Date(dateOnly + 'T00:00:00Z');
 
     const transaction = {
         description,
@@ -327,11 +475,11 @@ app.put('/api/transactions/:id', async (req, res) => {
     } catch (e) {
         return res.status(400).json({ error: "ID de transação inválido." });
     }
-    
+
     // Converte a data para UTC 
     const dateOnly = date.substring(0, 10);
-    const utcDate = new Date(dateOnly + 'T00:00:00Z'); 
-    
+    const utcDate = new Date(dateOnly + 'T00:00:00Z');
+
     const updatedFields = {
         description,
         value: parseFloat(value),
@@ -354,10 +502,10 @@ app.put('/api/transactions/:id', async (req, res) => {
 
         // 2. Lógica para EDITAR E QUEBRAR A CADEIA DE RECORRÊNCIA
         if (updatedFields.isRecurrent) {
-            
+
             // Determina qual é o ID ROOT original
             const rootId = oldTransaction.replicatedFromId;
-            
+
             // Se esta for uma réplica (tem rootId), o modelo ROOT antigo deve ser DESATIVADO
             if (rootId) {
                 // 2.1. Desativa o modelo ROOT original para que ele não gere mais réplicas
@@ -366,10 +514,10 @@ app.put('/api/transactions/:id', async (req, res) => {
                     { $set: { isSuperseded: true } }
                 );
                 console.log(`[Recorrência - Edição] Modelo ROOT antigo ${rootId} desativado (isSuperseded: true).`);
-                
+
                 // 2.2. Deleta TODAS as réplicas futuras (do próximo mês em diante)
                 const deleteResult = await transactionsCollection.deleteMany({
-                    replicatedFromId: rootId, 
+                    replicatedFromId: rootId,
                     date: { $gt: utcDate } // Deleta estritamente futuras
                 });
                 console.log(`[Recorrência - Edição] Deletadas ${deleteResult.deletedCount} réplicas futuras que apontavam para o ROOT antigo.`);
@@ -382,12 +530,12 @@ app.put('/api/transactions/:id', async (req, res) => {
                 // O usuário está editando o ROOT original diretamente.
                 // Deletamos apenas as réplicas futuras (do próximo mês em diante)
                 const nextMonth = new Date(utcDate.getFullYear(), utcDate.getMonth() + 1, 1);
-                
+
                 const deleteResult = await transactionsCollection.deleteMany({
                     replicatedFromId: oldTransaction._id,
                     date: { $gte: nextMonth }
                 });
-                 console.log(`[Recorrência - Edição] Deletadas ${deleteResult.deletedCount} réplicas futuras do ROOT original.`);
+                console.log(`[Recorrência - Edição] Deletadas ${deleteResult.deletedCount} réplicas futuras do ROOT original.`);
             }
 
         } else {
@@ -395,18 +543,18 @@ app.put('/api/transactions/:id', async (req, res) => {
             if (oldTransaction.isRecurrent) {
                 const rootId = oldTransaction.replicatedFromId || oldTransaction._id;
                 // Deletamos todas as réplicas futuras.
-                await transactionsCollection.deleteMany({ 
+                await transactionsCollection.deleteMany({
                     replicatedFromId: rootId,
-                    date: { $gte: utcDate } 
+                    date: { $gte: utcDate }
                 });
                 // Removemos o status de ROOT do item editado, se aplicável
-                unsetFields.replicatedFromId = ""; 
+                unsetFields.replicatedFromId = "";
                 unsetFields.isSuperseded = "";
                 delete updatedFields.replicatedFromId;
                 delete updatedFields.isSuperseded;
             }
         }
-        
+
         // 3. Executa a atualização do documento (incluindo as operações $set e $unset)
         const updateOperations = { $set: updatedFields };
         if (Object.keys(unsetFields).length > 0) {
@@ -441,7 +589,7 @@ app.delete('/api/transactions/:id', async (req, res) => {
     }
 
     const { id } = req.params;
-    
+
     // Garante que o ID é um ObjectId válido
     let objectId;
     try {
@@ -463,10 +611,10 @@ app.delete('/api/transactions/:id', async (req, res) => {
 
         if (transaction.isRecurrent) {
             const rootId = transaction.replicatedFromId || transaction._id;
-            
+
             // Deleta todas as réplicas futuras (do mês seguinte ao mês deletado em diante)
             const nextMonth = new Date(transaction.date.getFullYear(), transaction.date.getMonth() + 1, 1);
-            
+
             const deleteFutureResult = await transactionsCollection.deleteMany({
                 $or: [
                     { replicatedFromId: rootId, date: { $gte: nextMonth } },
@@ -474,18 +622,18 @@ app.delete('/api/transactions/:id', async (req, res) => {
                 ]
             });
             deletedFutureCount = deleteFutureResult.deletedCount;
-            
+
             console.log(`[Recorrência - Exclusão] Deletadas ${deletedFutureCount} réplicas futuras para o ROOT: ${rootId}`);
 
             // 💡 NOVO: Se o item deletado for uma réplica, o ROOT original deve ser reativado
             if (transaction.replicatedFromId) {
-                 await transactionsCollection.updateOne(
+                await transactionsCollection.updateOne(
                     { _id: transaction.replicatedFromId },
                     { $unset: { isSuperseded: "" } } // Remove a flag
                 );
             }
         }
-        
+
         // 3. Deleta a transação atual
         const result = await transactionsCollection.deleteOne({ _id: objectId });
 
@@ -508,7 +656,7 @@ app.delete('/api/transactions/:id', async (req, res) => {
 
 // --- ROTA 6: Extrato Mensal Detalhado (GET /api/transactions/monthly-list) ---
 app.get('/api/transactions/monthly-list', async (req, res) => {
-// ... (código resumido, não alterado) ...
+    // ... (código resumido, não alterado) ...
     if (!transactionsCollection) {
         return res.status(503).json({ error: "Servidor indisponível: Conexão DB falhou." });
     }
@@ -520,7 +668,7 @@ app.get('/api/transactions/monthly-list', async (req, res) => {
 
     const y = parseInt(year);
     const m = parseInt(month);
-    
+
     // Opcional: Checa e cria transações recorrentes (agora sincronizado)
     await replicateRecurringTransactions(y, m);
 

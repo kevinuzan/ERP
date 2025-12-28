@@ -19,7 +19,7 @@ let expenseChart = null; // Instância global para o gráfico Chart.js
 function showNotification(message, isError = false) {
     const notificationContainer = document.getElementById('notification-container');
     const notification = document.createElement('div');
-    
+
     // Classes Tailwind para notificação
     const baseClasses = "p-3 mb-3 rounded-lg shadow-md font-semibold text-sm transition-all duration-300 transform translate-y-0";
     const errorClasses = "bg-red-100 text-red-700 border border-red-400";
@@ -42,11 +42,11 @@ function showNotification(message, isError = false) {
  */
 function generateColors(count) {
     const colors = [
-        '#EF4444', '#F97316', '#FBBF24', '#22C55E', '#3B82F6', 
+        '#EF4444', '#F97316', '#FBBF24', '#22C55E', '#3B82F6',
         '#6366F1', '#A855F7', '#EC4899', '#84DED3', '#78716C'
     ];
     let palette = [];
-    for(let i = 0; i < count; i++) {
+    for (let i = 0; i < count; i++) {
         palette.push(colors[i % colors.length]);
     }
     return palette;
@@ -85,7 +85,7 @@ function renderPieChart(breakdownData) {
         chartContainer.innerHTML = '<p class="text-center text-gray-500 py-4">Nenhuma despesa para exibir no gráfico neste mês.</p>';
         return;
     }
-    
+
     const backgroundColors = generateColors(breakdownData.length);
 
     expenseChart = new Chart(ctx, {
@@ -104,7 +104,7 @@ function renderPieChart(breakdownData) {
                 legend: { position: 'top' },
                 tooltip: {
                     callbacks: {
-                        label: function(context) {
+                        label: function (context) {
                             let label = context.label || '';
                             if (context.parsed !== null) {
                                 label += ': ' + formatCurrency(context.parsed);
@@ -139,7 +139,7 @@ function renderSummary(summaryData, saldo) {
 
     const totalIncome = incomeData ? incomeData.total : 0;
     const totalExpense = expenseData ? expenseData.total : 0;
-    
+
     const container = document.getElementById('summary-container');
     container.innerHTML = `
         <div class="summary-card bg-green-100 text-green-800 border-green-300">
@@ -173,6 +173,103 @@ function renderSummary(summaryData, saldo) {
     }
 }
 
+
+// 1. ADICIONE ESTA FUNÇÃO NO TOPO DO APP.JS
+function urlBase64ToUint8Array(base64String) {
+    const padding = '='.repeat((4 - base64String.length % 4) % 4);
+    const base64 = (base64String + padding)
+        .replace(/\-/g, '+')
+        .replace(/_/g, '/');
+
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+
+    for (let i = 0; i < rawData.length; ++i) {
+        outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+}
+
+// 2. AGORA A FUNÇÃO INITPUSH (COMO DISCUTIMOS)
+async function initPush() {
+    try {
+        if (!('serviceWorker' in navigator)) return;
+        
+        // 1. PEDIR PERMISSÃO EXPLICITAMENTE
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') {
+            console.error("Permissão de notificação negada pelo usuário.");
+            return;
+        }
+
+        const registration = await navigator.serviceWorker.ready;
+        
+        // 2. LIMPEZA (Opcional mas recomendado)
+        const currentSub = await registration.pushManager.getSubscription();
+        if (currentSub) await currentSub.unsubscribe();
+
+        // 3. REGISTRO (Use sua chave VAPID pública aqui)
+        const publicKey = 'BKU-RnXVzU2Ugxo7vk_Wh9dxY1fFE8A1M4cQEIMeDlY3dITozNxQrcA1uiuYvMSKxo4quovM-pD4sn5IIhpV71w'.trim();
+        const convertedKey = urlBase64ToUint8Array(publicKey);
+
+        const subscription = await registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: convertedKey
+        });
+
+        console.log("✅ Assinatura obtida!");
+
+        await fetch('/api/subscribe', {
+            method: 'POST',
+            body: JSON.stringify(subscription),
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        console.log("✅ Agora sim! Navegador inscrito.");
+    } catch (err) {
+        console.error("❌ Erro fatal no Push:", err);
+    }
+}
+// async function initPush() {
+//     try {
+//         console.log("A")
+//         if (!('serviceWorker' in navigator)) return;
+
+//         console.log("B")
+//         const registration = await navigator.serviceWorker.ready;
+
+//         // Limpeza de assinatura antiga para evitar o AbortError
+//         const existingSub = await registration.pushManager.getSubscription();
+//         if (existingSub) await existingSub.unsubscribe();
+//         console.log("C")
+
+//         const publicKey = 'BKU-RnXVzU2Ugxo7vk_Wh9dxY1fFE8A1M4cQEIMeDlY3dITozNxQrcA1uiuYvMSKxo4quovM-pD4sn5IIhpV71w'; // <--- COLOQUE A CHAVE GERADA AQUI
+//         const convertedKey = urlBase64ToUint8Array(publicKey);
+
+//         console.log("D")
+//         const subscription = await registration.pushManager.subscribe({
+//             userVisibleOnly: true,
+//             applicationServerKey: convertedKey
+//         });
+
+//         console.log("E")
+//         await fetch('/api/subscribe', {
+//             method: 'POST',
+//             body: JSON.stringify(subscription),
+//             headers: { 'Content-Type': 'application/json' }
+//         });
+
+//         console.log("F")
+//         console.log("✅ Agora sim! Navegador inscrito.");
+//     } catch (err) {
+//         console.error("❌ Erro fatal no Push:", err);
+//     }
+// }
+
+// 3. CHAME A FUNÇÃO
+initPush().catch(err => console.error(err));
+
+
 /**
  * Renderiza a lista detalhada de transações.
  */
@@ -189,8 +286,8 @@ function renderTransactionList(transactions) {
         const row = tbody.insertRow();
 
         const date = new Date(t.date);
-        const formattedDate = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', timeZone: 'UTC'}).format(date);
-        
+        const formattedDate = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', timeZone: 'UTC' }).format(date);
+
         const isReceita = t.type === 'RECEITA';
         const valueClass = isReceita ? 'text-green-600' : 'text-red-600';
         const recurrentIcon = t.isRecurrent ? '⚡' : '';
@@ -203,13 +300,13 @@ function renderTransactionList(transactions) {
         const valueCell = row.insertCell(4);
         valueCell.textContent = formatCurrency(t.value);
         valueCell.classList.add('text-right', 'font-bold', valueClass);
-        
+
         row.insertCell(5).textContent = recurrentIcon; // Campo Rec.
-        
+
         // 💡 NOVA COLUNA: Ações
         const actionsCell = row.insertCell(6);
         actionsCell.classList.add('text-center');
-        
+
         // Botão Editar
         const editBtn = document.createElement('button');
         editBtn.className = 'text-blue-600 hover:text-blue-800 font-semibold mr-3';
@@ -217,7 +314,7 @@ function renderTransactionList(transactions) {
         editBtn.onclick = () => openEditModal(t);
 
         // Botão Excluir (Oculto, pois a exclusão será feita pelo modal)
-        
+
         actionsCell.appendChild(editBtn);
         // O botão de exclusão será incluído diretamente no modal para ter a confirmação antes.
     });
@@ -231,7 +328,7 @@ function renderTransactionList(transactions) {
  */
 function openEditModal(transaction) {
     const modal = document.getElementById('editModal');
-    
+
     // Preenche os campos do formulário
     document.getElementById('edit-id').value = transaction._id;
     document.getElementById('edit-description').value = transaction.description;
@@ -239,7 +336,7 @@ function openEditModal(transaction) {
     document.getElementById('edit-type').value = transaction.type;
     document.getElementById('edit-category').value = transaction.category;
     document.getElementById('edit-isRecurrent').checked = transaction.isRecurrent;
-    
+
     // A data do MongoDB é ISO string. Precisa ser convertida para AAAA-MM-DD
     document.getElementById('edit-date').value = formatDateForInput(transaction.date);
 
@@ -302,7 +399,7 @@ async function submitEdit(event) {
  */
 async function handleDelete(id, description) {
     const confirmation = prompt(`⚠️ Para EXCLUIR permanentemente a transação "${description}", digite 'EXCLUIR' abaixo:`);
-    
+
     if (confirmation !== 'EXCLUIR') {
         showNotification("A exclusão foi cancelada.", true);
         return;
@@ -346,7 +443,7 @@ async function fetchAndRenderBreakdownChart(year, month) {
         renderPieChart(breakdownData);
     } catch (error) {
         console.error('Erro ao carregar o gráfico de detalhamento:', error);
-        document.getElementById('chartContainer').innerHTML = 
+        document.getElementById('chartContainer').innerHTML =
             '<p class="text-center text-red-500 py-4">Erro ao carregar o gráfico.</p>';
     }
 }
@@ -400,7 +497,7 @@ function handleFormSubmit(event) {
     event.preventDefault();
 
     const form = event.target;
-    
+
     const formData = {
         description: form.description.value,
         value: parseFloat(form.value.value),
@@ -445,7 +542,7 @@ async function submitTransaction(data, form) {
  */
 async function cleanDatabase() {
     const userWantsToProceed = prompt("⚠️ Para DELETAR PERMANENTEMENTE TODAS as suas transações, digite 'DELETAR' abaixo:");
-    
+
     if (userWantsToProceed !== 'DELETAR') {
         showNotification("A limpeza do banco foi cancelada.", true);
         return;
@@ -488,13 +585,13 @@ async function cleanDatabase() {
 function loadCurrentMonthData() {
     const year = currentDisplayDate.getFullYear();
     const month = currentDisplayDate.getMonth() + 1; // getMonth é zero-based
-    
+
     // 1. Atualiza o display
     updateMonthDisplay(year, month);
 
     // 2. Carrega os dados de Resumo e Saldo (inclui replicação no server.mjs)
     fetchMonthlySummary(year, month);
-    
+
     // 3. Carrega o Extrato Detalhado
     fetchAndRenderTransactionList(year, month);
 
@@ -513,10 +610,10 @@ function changeMonth(delta) {
 function toggleFormVisibility() {
     const content = document.getElementById('transaction-form-content');
     const icon = document.getElementById('toggle-icon');
-    
+
     // Alterna a classe 'hidden' para esconder/mostrar (Melhor que style.display)
-    content.classList.toggle('hidden'); 
-    
+    content.classList.toggle('hidden');
+
     if (content.classList.contains('hidden')) {
         icon.textContent = '▼'; // Ícone para 'Abrir'
     } else {
@@ -539,17 +636,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Configura listener para o botão de limpeza
     // document.getElementById('reset-data-btn').addEventListener('click', cleanDatabase);
-    
+
     // Listener para o Toggle do Formulário
     document.getElementById('form-toggle-header').addEventListener('click', toggleFormVisibility);
-    
+
     // Listener para o modal de edição
     document.getElementById('editForm').addEventListener('submit', submitEdit);
     document.getElementById('close-modal-btn').addEventListener('click', closeEditModal);
 
     // Preenche a data inicial do formulário
     const today = new Date();
-    document.getElementById('transaction-date').value = 
+    document.getElementById('transaction-date').value =
         `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
     // Carrega os dados
