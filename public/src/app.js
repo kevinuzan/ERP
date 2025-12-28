@@ -194,7 +194,7 @@ function urlBase64ToUint8Array(base64String) {
 async function initPush() {
     try {
         if (!('serviceWorker' in navigator)) return;
-        
+
         // 1. PEDIR PERMISSÃO EXPLICITAMENTE
         const permission = await Notification.requestPermission();
         if (permission !== 'granted') {
@@ -203,7 +203,7 @@ async function initPush() {
         }
 
         const registration = await navigator.serviceWorker.ready;
-        
+
         // 2. LIMPEZA (Opcional mas recomendado)
         const currentSub = await registration.pushManager.getSubscription();
         if (currentSub) await currentSub.unsubscribe();
@@ -278,9 +278,12 @@ function renderTransactionList(transactions) {
     tbody.innerHTML = '';
 
     if (transactions.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-500 py-4">Nenhuma transação encontrada para este mês.</td></tr>'; // 7 colunas
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-500 py-4">Nenhuma transação encontrada para este mês.</td></tr>';
         return;
     }
+
+    // Reinicia o saldo para o cálculo deste mês
+    let saldoAcumulado = 0;
 
     transactions.forEach(t => {
         const row = tbody.insertRow();
@@ -292,31 +295,42 @@ function renderTransactionList(transactions) {
         const valueClass = isReceita ? 'text-green-600' : 'text-red-600';
         const recurrentIcon = t.isRecurrent ? '⚡' : '';
 
+        // Cálculo do saldo linha a linha
+        if (isReceita) {
+            saldoAcumulado += t.value;
+        } else {
+            saldoAcumulado -= t.value;
+        }
+
         row.insertCell(0).textContent = formattedDate;
         row.insertCell(1).textContent = t.description;
         row.insertCell(2).textContent = t.category;
         row.insertCell(3).textContent = t.type;
 
+        // Valor da Transação
         const valueCell = row.insertCell(4);
         valueCell.textContent = formatCurrency(t.value);
         valueCell.classList.add('text-right', 'font-bold', valueClass);
 
-        row.insertCell(5).textContent = recurrentIcon; // Campo Rec.
+        // SALDO DO DIA (Coluna 5)
+        const saldoCell = row.insertCell(5);
+        saldoCell.textContent = formatCurrency(saldoAcumulado);
+        saldoCell.classList.add('text-right', 'font-bold');
+        // Azul para positivo, Laranja para negativo
+        saldoCell.classList.add(saldoAcumulado >= 0 ? 'text-blue-600' : 'text-orange-600');
 
-        // 💡 NOVA COLUNA: Ações
-        const actionsCell = row.insertCell(6);
+        row.insertCell(6).textContent = recurrentIcon;
+
+        // Ações
+        const actionsCell = row.insertCell(7);
         actionsCell.classList.add('text-center');
 
-        // Botão Editar
         const editBtn = document.createElement('button');
         editBtn.className = 'text-blue-600 hover:text-blue-800 font-semibold mr-3';
         editBtn.textContent = 'Editar';
         editBtn.onclick = () => openEditModal(t);
 
-        // Botão Excluir (Oculto, pois a exclusão será feita pelo modal)
-
         actionsCell.appendChild(editBtn);
-        // O botão de exclusão será incluído diretamente no modal para ter a confirmação antes.
     });
 }
 
