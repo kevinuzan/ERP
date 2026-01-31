@@ -963,3 +963,31 @@ document.addEventListener('DOMContentLoaded', () => {
     // Carrega os dados
     loadCurrentMonthData();
 });
+
+// Lógica para detectar atualização do PWA
+let newWorker;
+
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/service-worker.js').then(reg => {
+        reg.addEventListener('updatefound', () => {
+            newWorker = reg.installing;
+            newWorker.addEventListener('statechange', () => {
+                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                    // Se o worker foi instalado e já existe um antigo controlando a página
+                    showUpdateNotification();
+                }
+            });
+        });
+    });
+}
+
+function showUpdateNotification() {
+    // Criar um elemento visual de aviso (usando o sistema de notificação que você já tem ou um novo)
+    const updateDiv = document.createElement('div');
+    updateDiv.className = "fixed bottom-4 left-4 right-4 bg-blue-600 text-white p-4 rounded-xl shadow-2xl z-[100] flex justify-between items-center animate-bounce";
+    updateDiv.innerHTML = `
+        <span class="text-sm font-bold">✨ Nova versão disponível!</span>
+        <button onclick="window.location.reload()" class="bg-white text-blue-600 px-3 py-1 rounded-lg text-xs font-black uppercase">Atualizar</button>
+    `;
+    document.body.appendChild(updateDiv);
+}
