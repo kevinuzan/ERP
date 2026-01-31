@@ -58,9 +58,17 @@
     <div id="notification-container" class="fixed top-4 right-4 z-50 w-full max-w-xs">
         <!-- Notificações serão injetadas aqui -->
     </div>
-    <div class="flex gap-4 mb-6 border-b">
-        <button onclick="switchTab('main')" class="pb-2 px-4 border-b-2 border-blue-600">Geral</button>
-        <button onclick="switchTab('individual')" class="pb-2 px-4">Controle Individual</button>
+    <div class="flex justify-center mt-14 mb-4">
+        <div class="flex bg-white p-1 rounded-xl shadow-sm border border-gray-200">
+            <button id="btn-tab-main" onclick="switchTab('main')"
+                class="py-2 px-6 rounded-lg text-sm font-bold transition-all duration-300 mr-2">
+                Geral
+            </button>
+            <button id="btn-tab-individual" onclick="switchTab('individual')"
+                class="py-2 px-6 rounded-lg text-sm font-bold transition-all duration-300">
+                Individual
+            </button>
+        </div>
     </div>
 
     <div id="tab-individual" class="hidden">
@@ -148,8 +156,9 @@
                             <option value="Todos">Todos</option>
                             <option value="Any">Any</option>
                             <option value="Kevin">Kevin</option>
+                            <option value="Conjunto">Conjunto</option>
                         </select>
-                        <button onclick="setOwnerFilter('Conjunto')"
+                        <!-- <button onclick="setOwnerFilter('Conjunto')"
                             class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-blue-700 transition shadow-md">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -157,7 +166,7 @@
                                 </path>
                             </svg>
                             Conjunto
-                        </button>
+                        </button> -->
                     </div>
                 </div>
 
@@ -188,7 +197,7 @@
         </div>
 
         <div class="bg-white rounded-xl shadow-lg overflow-hidden">
-            <div class="p-4 bg-gray-50 border-b flex justify-between items-center">
+            <!-- <div class="p-4 bg-gray-50 border-b flex justify-between items-center">
                 <h3 class="font-bold">Extrato do Mês</h3>
                 <select id="filter-owner" onchange="renderIndividualTable()" class="border p-1 rounded text-sm">
                     <option value="Todos">Todos</option>
@@ -196,7 +205,7 @@
                     <option value="Kevin">Kevin</option>
                     <option value="Conjunto">Conjunto</option>
                 </select>
-            </div>
+            </div> -->
             <table class="w-full text-left border-collapse">
                 <thead class="bg-gray-100 text-sm">
                     <tr>

@@ -326,21 +326,44 @@ function closeIndModal() {
     document.getElementById('modal-edit-ind').classList.add('hidden');
 }
 
-async function switchTab(tab) {
-    const main = document.getElementById('tab-main');
-    const ind = document.getElementById('tab-individual');
+function switchTab(tab) {
+    const mainTab = document.getElementById('tab-main');
+    const indTab = document.getElementById('tab-individual');
+    const btnMain = document.getElementById('btn-tab-main');
+    const btnInd = document.getElementById('btn-tab-individual');
+
+    // Classes para o botão ATIVO
+    const activeClasses = ['bg-blue-600', 'text-white', 'shadow-md'];
+    // Classes para o botão INATIVO
+    const inactiveClasses = ['text-gray-500', 'hover:bg-gray-100'];
 
     if (tab === 'main') {
-        main.classList.remove('hidden');
-        ind.classList.add('hidden');
-    } else {
-        main.classList.add('hidden');
-        ind.classList.remove('hidden');
-        await loadIndividualData();
+        // Exibir conteúdo
+        mainTab.classList.remove('hidden');
+        indTab.classList.add('hidden');
 
-        // Preenche a data do formulário com o dia atual por padrão
-        const today = new Date().toISOString().split('T')[0];
-        document.getElementById('ind-date').value = today;
+        // Estilizar botões
+        btnMain.classList.add(...activeClasses);
+        btnMain.classList.remove(...inactiveClasses);
+
+        btnInd.classList.add(...inactiveClasses);
+        btnInd.classList.remove(...activeClasses);
+    } else {
+        // Exibir conteúdo
+        mainTab.classList.add('hidden');
+        indTab.classList.remove('hidden');
+
+        // Estilizar botões
+        btnInd.classList.add(...activeClasses);
+        btnInd.classList.remove(...inactiveClasses);
+
+        btnMain.classList.add(...inactiveClasses);
+        btnMain.classList.remove(...activeClasses);
+
+        // Carrega os dados da aba individual
+        if (typeof loadIndividualData === 'function') {
+            loadIndividualData();
+        }
     }
 }
 
@@ -449,32 +472,54 @@ function renderIndividualCategoryTable(breakdownList) {
     }
 }
 
+
 // Atualize sua função principal de renderização para chamar a nova lógica
 function renderIndividualTable() {
     const filter = document.getElementById('filter-owner').value;
     const tbody = document.getElementById('individual-table-body');
+    const personCardsContainer = document.getElementById('individual-cards');
 
     tbody.innerHTML = '';
+
+    // 1. Calcular Totais por Pessoa (Sempre do mês inteiro, independente do filtro)
+    const personTotals = { Any: 0, Kevin: 0, Conjunto: 0 };
+    indDataCache.forEach(item => {
+        if (personTotals.hasOwnProperty(item.owner)) {
+            personTotals[item.owner] += item.value;
+        }
+    });
+
+    // 2. Renderizar os Cards de Pessoa (Any, Kevin, Conjunto)
+    personCardsContainer.innerHTML = Object.entries(personTotals).map(([name, total]) => `
+        <div class="summary-card bg-white border-blue-200">
+            <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider">${name}</h3>
+            <p class="text-xl font-black text-blue-600">${formatCurrency(total)}</p>
+        </div>
+    `).join('');
+
+    // 3. Filtrar dados para o gráfico e extrato
     const filtered = filter === 'Todos' ? indDataCache : indDataCache.filter(i => i.owner === filter);
 
-    // Chama o novo gráfico e a tabela lateral com os dados filtrados
+    // Atualiza Gráfico e Tabela de Categoria Lateral
     renderIndividualPieChart(filtered);
 
-    // Preenche o extrato detalhado (tabela de baixo)
+    // 4. Preencher o Extrato Detalhado (Tabela de baixo)
     filtered.forEach(item => {
         const dateStr = new Date(item.date).toLocaleDateString('pt-BR', { timeZone: 'UTC' });
         tbody.innerHTML += `
             <tr class="border-b hover:bg-gray-50">
-                <td class="p-3 text-gray-500 text-sm">${dateStr}</td>
-                <td class="p-3">
+                <td class="p-4 text-gray-500 text-sm">${dateStr}</td>
+                <td class="p-4">
                     <div class="font-medium text-gray-700">${item.description}</div>
-                    <div class="text-[10px] text-gray-400 uppercase">${item.category || 'Geral'}</div>
+                    <div class="text-[10px] text-gray-400 uppercase">${item.category || 'Outros'}</div>
                 </td>
-                <td class="p-3"><span class="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-[10px] font-bold">${item.owner}</span></td>
-                <td class="p-3 text-right font-bold text-blue-600">${formatCurrency(item.value)}</td>
-                <td class="p-3 text-center flex gap-2 justify-center">
-                    <button onclick="openEditInd('${item._id}')" class="text-blue-400 hover:text-blue-600">✏️</button>
-                    <button onclick="deleteInd('${item._id}')" class="text-red-400 hover:text-red-600">🗑️</button>
+                <td class="p-4"><span class="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-[10px] font-bold">${item.owner}</span></td>
+                <td class="p-4 text-right font-bold text-blue-600">${formatCurrency(item.value)}</td>
+                <td class="p-4 text-center">
+                    <div class="flex justify-center gap-2">
+                        <button onclick="openEditInd('${item._id}')" class="text-blue-400 hover:text-blue-600">✏️</button>
+                        <button onclick="deleteInd('${item._id}')" class="text-red-400 hover:text-red-600">🗑️</button>
+                    </div>
                 </td>
             </tr>
         `;
@@ -889,6 +934,7 @@ function toggleFormVisibility() {
 
 // --- INICIALIZAÇÃO ---
 document.addEventListener('DOMContentLoaded', () => {
+    switchTab('main');
     // Garante que a data de exibição começa no dia 1
     currentDisplayDate.setDate(1);
 
