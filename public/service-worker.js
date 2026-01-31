@@ -1,4 +1,4 @@
-const CACHE_NAME = 'financas-pwa-v1';
+const CACHE_NAME = 'financas-pwa-v2';
 
 const FILES_TO_CACHE = [
   '/index.html',
