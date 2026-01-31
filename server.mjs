@@ -13,7 +13,7 @@ const DB_NAME = "planejamento_financeiro";
 const COLLECTION_NAME = "transactions";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
+let individualCollection;
 // Substitua esta string pela sua URI de conexão do MongoDB
 const MONGO_URI = process.env.MONGO_PUBLIC_URL || "SUA_URI_LOCAL_DE_TESTE";
 
@@ -89,7 +89,7 @@ async function verificarVencimentos() {
             if (diffDays === 2) mensagem = `⏰ Conta chegando! "${despesa.description}" R$ ${despesa.value} vence em 2 dias.`;
             else if (diffDays === 1) mensagem = `⚠️ Atenção: "${despesa.description}" R$ ${despesa.value} vence amanhã!`;
             else if (diffDays === 0) mensagem = `💸 Vence HOJE: "${despesa.description}" R$ ${despesa.value}.`;
-            
+
             console.log(mensagem)
             if (mensagem) {
                 const payload = JSON.stringify({
@@ -182,6 +182,7 @@ async function connectDB() {
         await client.connect();
         const db = client.db(DB_NAME);
         transactionsCollection = db.collection(COLLECTION_NAME);
+        individualCollection = db.collection("individual_expenses"); // Nova coleção
         console.log(`Conectado ao MongoDB: DB '${DB_NAME}'`);
 
         app.listen(PORT, () => {
@@ -366,7 +367,66 @@ app.get('/api/summary', async (req, res) => {
         res.status(500).json({ error: "Erro interno do servidor ao gerar o resumo." });
     }
 });
+// Rota para editar um gasto individual existente
+app.put('/api/individual/:id', async (req, res) => {
+    try {
+        const { description, value, owner, date, category } = req.body;
+        await individualCollection.updateOne(
+            { _id: new ObjectId(req.params.id) },
+            { 
+                $set: { 
+                    description, 
+                    value: parseFloat(value), 
+                    owner, 
+                    date: new Date(date),
+                    category 
+                } 
+            }
+        );
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: "Erro ao atualizar" });
+    }
+});
 
+app.post('/api/individual', async (req, res) => {
+    try {
+        const { description, value, owner, date } = req.body;
+        await individualCollection.insertOne({
+            description,
+            value: parseFloat(value),
+            owner,
+            date: new Date(date) // O Mongo salvará a data exata escolhida
+        });
+        res.status(201).json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: "Erro ao salvar" });
+    }
+});
+
+app.get('/api/individual/list', async (req, res) => {
+    const { month, year } = req.query;
+    const startDate = new Date(Date.UTC(year, month, 1));
+    const endDate = new Date(Date.UTC(year, parseInt(month) + 1, 1));
+
+    try {
+        const expenses = await individualCollection.find({
+            date: { $gte: startDate, $lt: endDate }
+        }).sort({ date: -1 }).toArray();
+        res.json(expenses);
+    } catch (error) {
+        res.status(500).json({ error: "Erro ao buscar" });
+    }
+});
+
+app.delete('/api/individual/:id', async (req, res) => {
+    try {
+        await individualCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: "Erro ao excluir" });
+    }
+});
 
 // --- ROTA 2: Detalhamento por Categoria (GET /api/breakdown) ---
 // ... (código resumido, não alterado) ...

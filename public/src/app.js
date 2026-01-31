@@ -269,6 +269,257 @@ async function initPush() {
 // 3. CHAME A FUNÇÃO
 initPush().catch(err => console.error(err));
 
+let indCurrentDate = new Date();
+indCurrentDate.setDate(1);
+let indDataCache = [];
+
+// Abrir Modal e preencher os dados atuais
+function openEditInd(id) {
+    const item = indDataCache.find(i => i._id === id);
+    if (!item) return;
+
+    document.getElementById('edit-ind-id').value = item._id;
+    document.getElementById('edit-ind-desc').value = item.description;
+    document.getElementById('edit-ind-value').value = item.value;
+    document.getElementById('edit-ind-owner').value = item.owner;
+
+    // NOVO: Preencher a categoria no modal
+    document.getElementById('edit-ind-category').value = item.category || "Outros";
+
+    // Ajusta a data
+    const dateObj = new Date(item.date);
+    document.getElementById('edit-ind-date').value = dateObj.toISOString().split('T')[0];
+
+    document.getElementById('modal-edit-ind').classList.remove('hidden');
+}
+
+// Salvar a edição com a categoria
+async function saveIndEdit() {
+    const id = document.getElementById('edit-ind-id').value;
+
+    const payload = {
+        description: document.getElementById('edit-ind-desc').value,
+        value: parseFloat(document.getElementById('edit-ind-value').value),
+        owner: document.getElementById('edit-ind-owner').value,
+        category: document.getElementById('edit-ind-category').value, // PEGA A CATEGORIA EDITADA
+        date: document.getElementById('edit-ind-date').value
+    };
+
+    try {
+        const response = await fetch(`/api/individual/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (response.ok) {
+            closeIndModal();
+            showNotification("Gasto atualizado com sucesso!");
+            loadIndividualData(); // Recarrega a tabela e os cards
+        }
+    } catch (err) {
+        console.error("Erro ao editar:", err);
+    }
+}
+
+function closeIndModal() {
+    document.getElementById('modal-edit-ind').classList.add('hidden');
+}
+
+async function switchTab(tab) {
+    const main = document.getElementById('tab-main');
+    const ind = document.getElementById('tab-individual');
+
+    if (tab === 'main') {
+        main.classList.remove('hidden');
+        ind.classList.add('hidden');
+    } else {
+        main.classList.add('hidden');
+        ind.classList.remove('hidden');
+        await loadIndividualData();
+
+        // Preenche a data do formulário com o dia atual por padrão
+        const today = new Date().toISOString().split('T')[0];
+        document.getElementById('ind-date').value = today;
+    }
+}
+
+async function loadIndividualData() {
+    const month = indCurrentDate.getMonth();
+    const year = indCurrentDate.getFullYear();
+
+    // Atualiza Display de Mês
+    const monthNames = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+    document.getElementById('ind-month-display').textContent = `${monthNames[month]} ${year}`;
+
+    const response = await fetch(`/api/individual/list?month=${month}&year=${year}`);
+    indDataCache = await response.json();
+    renderIndividualTable();
+}
+
+let individualChart = null;
+
+// Função para filtrar pelo botão "Conjunto"
+function setOwnerFilter(owner) {
+    document.getElementById('filter-owner').value = owner;
+    loadIndividualData();
+}
+
+function renderIndividualPieChart(data) {
+    const chartContainer = document.getElementById('individualChartContainer');
+    chartContainer.innerHTML = '<canvas id="individual-chart-canvas"></canvas>';
+    const ctx = document.getElementById('individual-chart-canvas').getContext('2d');
+
+    if (individualChart) {
+        individualChart.destroy();
+    }
+
+    if (data.length === 0) {
+        chartContainer.innerHTML = '<p class="text-center text-gray-500 py-4">Nenhuma despesa para exibir no gráfico.</p>';
+        return;
+    }
+
+    // Agrupar dados por categoria
+    const categories = {};
+    data.forEach(item => {
+        const cat = item.category || 'Outros';
+        categories[cat] = (categories[cat] || 0) + item.value;
+    });
+
+    const breakdownData = Object.entries(categories).map(([category, total]) => ({ category, total }));
+
+    // Usar a mesma função de cores do seu app original
+    const backgroundColors = typeof generateColors === 'function'
+        ? generateColors(breakdownData.length)
+        : ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#64748b'];
+
+    individualChart = new Chart(ctx, {
+        type: 'pie',
+        data: {
+            labels: breakdownData.map(item => item.category),
+            datasets: [{
+                data: breakdownData.map(item => item.total),
+                backgroundColor: backgroundColors,
+                hoverOffset: 10,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'top' },
+                tooltip: {
+                    callbacks: {
+                        label: function (context) {
+                            let label = context.label || '';
+                            if (context.parsed !== null) {
+                                // Usa a mesma função de formatar moeda do seu app
+                                label += ': ' + formatCurrency(context.parsed);
+                            }
+                            return label;
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    // Renderiza a Tabela de Detalhes Lateral
+    renderIndividualCategoryTable(breakdownData);
+}
+
+function renderIndividualCategoryTable(breakdownList) {
+    const tbody = document.getElementById('individual-category-body');
+    tbody.innerHTML = '';
+
+    if (breakdownList.length > 0) {
+        breakdownList.sort((a, b) => b.total - a.total).forEach(item => {
+            const row = tbody.insertRow();
+            const cellCat = row.insertCell(0);
+            const cellTotal = row.insertCell(1);
+
+            cellCat.textContent = item.category;
+            cellCat.classList.add('px-3', 'py-2', 'text-sm', 'text-gray-700');
+
+            cellTotal.textContent = formatCurrency(item.total);
+            cellTotal.classList.add('px-3', 'py-2', 'text-right', 'text-sm', 'font-bold', 'text-gray-900');
+        });
+    } else {
+        tbody.innerHTML = '<tr><td colspan="2" class="text-center py-4 text-gray-500">Nenhum gasto registrado.</td></tr>';
+    }
+}
+
+// Atualize sua função principal de renderização para chamar a nova lógica
+function renderIndividualTable() {
+    const filter = document.getElementById('filter-owner').value;
+    const tbody = document.getElementById('individual-table-body');
+
+    tbody.innerHTML = '';
+    const filtered = filter === 'Todos' ? indDataCache : indDataCache.filter(i => i.owner === filter);
+
+    // Chama o novo gráfico e a tabela lateral com os dados filtrados
+    renderIndividualPieChart(filtered);
+
+    // Preenche o extrato detalhado (tabela de baixo)
+    filtered.forEach(item => {
+        const dateStr = new Date(item.date).toLocaleDateString('pt-BR', { timeZone: 'UTC' });
+        tbody.innerHTML += `
+            <tr class="border-b hover:bg-gray-50">
+                <td class="p-3 text-gray-500 text-sm">${dateStr}</td>
+                <td class="p-3">
+                    <div class="font-medium text-gray-700">${item.description}</div>
+                    <div class="text-[10px] text-gray-400 uppercase">${item.category || 'Geral'}</div>
+                </td>
+                <td class="p-3"><span class="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-[10px] font-bold">${item.owner}</span></td>
+                <td class="p-3 text-right font-bold text-blue-600">${formatCurrency(item.value)}</td>
+                <td class="p-3 text-center flex gap-2 justify-center">
+                    <button onclick="openEditInd('${item._id}')" class="text-blue-400 hover:text-blue-600">✏️</button>
+                    <button onclick="deleteInd('${item._id}')" class="text-red-400 hover:text-red-600">🗑️</button>
+                </td>
+            </tr>
+        `;
+    });
+}
+
+function changeIndMonth(step) {
+    indCurrentDate.setMonth(indCurrentDate.getMonth() + step);
+    loadIndividualData();
+}
+
+async function deleteInd(id) {
+    if (!confirm("Excluir?")) return;
+    await fetch(`/api/individual/${id}`, { method: 'DELETE' });
+    loadIndividualData();
+}
+
+// 2. Atualize o Listener do Formulário para enviar a data selecionada
+document.getElementById('individual-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const inputDate = document.getElementById('ind-date').value;
+
+    const payload = {
+        description: document.getElementById('ind-desc').value,
+        value: document.getElementById('ind-value').value,
+        owner: document.getElementById('ind-owner').value,
+        // Usamos a data que você escolheu no calendário
+        date: new Date(inputDate + "T12:00:00")
+    };
+
+    await fetch('/api/individual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+
+    showNotification("Gasto adicionado!");
+    e.target.reset();
+
+    // Reseta a data para hoje após salvar
+    document.getElementById('ind-date').value = new Date().toISOString().split('T')[0];
+
+    loadIndividualData();
+});
 
 /**
  * Renderiza a lista detalhada de transações.
