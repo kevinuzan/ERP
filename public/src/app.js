@@ -288,7 +288,7 @@ function openEditInd(id) {
 
     // Ajusta a data
     const dateObj = new Date(item.date);
-    document.getElementById('edit-ind-date').value = dateObj.toISOString().split('T')[0];
+    document.getElementById('ind-date').value = dateObj.toISOString().split('T')[0];
 
     document.getElementById('modal-edit-ind').classList.remove('hidden');
 }
@@ -475,6 +475,7 @@ function renderIndividualCategoryTable(breakdownList) {
 
 // Atualize sua função principal de renderização para chamar a nova lógica
 function renderIndividualTable() {
+    document.getElementById('ind-date').value = new Date().toISOString().split('T')[0];
     const filter = document.getElementById('filter-owner').value;
     const tbody = document.getElementById('individual-table-body');
     const personCardsContainer = document.getElementById('individual-cards');
@@ -511,7 +512,7 @@ function renderIndividualTable() {
                 <td class="p-4 text-gray-500 text-sm">${dateStr}</td>
                 <td class="p-4">
                     <div class="font-medium text-gray-700">${item.description}</div>
-                    <div class="text-[10px] text-gray-400 uppercase">${item.category || 'Outros'}</div>
+                    <div class="text-[10px] text-gray-400 uppercase">${item.category}</div>
                 </td>
                 <td class="p-4"><span class="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-[10px] font-bold">${item.owner}</span></td>
                 <td class="p-4 text-right font-bold text-blue-600">${formatCurrency(item.value)}</td>
@@ -547,6 +548,7 @@ document.getElementById('individual-form').addEventListener('submit', async (e) 
         description: document.getElementById('ind-desc').value,
         value: document.getElementById('ind-value').value,
         owner: document.getElementById('ind-owner').value,
+        category: document.getElementById('ind-category').value,
         // Usamos a data que você escolheu no calendário
         date: new Date(inputDate + "T12:00:00")
     };

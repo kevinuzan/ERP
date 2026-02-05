@@ -391,12 +391,13 @@ app.put('/api/individual/:id', async (req, res) => {
 
 app.post('/api/individual', async (req, res) => {
     try {
-        const { description, value, owner, date } = req.body;
+        const { description, value, owner, date, category } = req.body;
         await individualCollection.insertOne({
             description,
             value: parseFloat(value),
             owner,
-            date: new Date(date) // O Mongo salvará a data exata escolhida
+            date: new Date(date), // O Mongo salvará a data exata escolhida
+            category
         });
         res.status(201).json({ success: true });
     } catch (error) {
