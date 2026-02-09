@@ -290,6 +290,7 @@ function openEditInd(id) {
     const dateObj = new Date(item.date);
     document.getElementById('ind-date').value = dateObj.toISOString().split('T')[0];
 
+    document.getElementById('edit-ind-date').value = dateObj.toISOString().split('T')[0];
     document.getElementById('modal-edit-ind').classList.remove('hidden');
 }
 
