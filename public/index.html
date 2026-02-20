@@ -68,6 +68,10 @@
                 class="py-2 px-6 rounded-lg text-sm font-bold transition-all duration-300">
                 Individual
             </button>
+            <button id="btn-tab-disney" onclick="switchTab('disney')"
+                class="py-2 px-6 rounded-lg text-sm font-bold transition-all duration-300">
+                Disney
+            </button>
         </div>
     </div>
 
@@ -218,6 +222,206 @@
                     </table>
                 </div>
             </div>
+        </div>
+    </div>
+    <div id="disney-modal"
+        class="hidden fixed inset-0 bg-black bg-opacity-50 z-[100] flex items-center justify-center p-4">
+        <div
+            class="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in duration-300">
+            <div class="bg-blue-600 p-4 text-white flex justify-between items-center">
+                <h3 class="font-bold text-lg">Editar Gasto Disney</h3>
+                <button onclick="closeDisneyModal()" class="text-2xl">&times;</button>
+            </div>
+
+            <form id="disney-modal-form" class="p-6 space-y-4">
+                <input type="hidden" id="modal-disney-id">
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Data</label>
+                        <input type="date" id="modal-disney-date" class="w-full border p-2 rounded-lg" required>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Responsável</label>
+                        <select id="modal-disney-responsible" class="w-full border p-2 rounded-lg" required>
+                            <option value="Kevin">Kevin</option>
+                            <option value="Maria Vitoria">Maria Vitoria</option>
+                            <option value="Any">Any</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Descrição</label>
+                    <input type="text" id="modal-disney-desc" class="w-full border p-2 rounded-lg" required>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Valor</label>
+                        <input type="number" id="modal-disney-value" step="0.01" class="w-full border p-2 rounded-lg"
+                            required>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Moeda Original</label>
+                        <select id="modal-disney-currency" class="w-full border p-2 rounded-lg font-bold">
+                            <option value="USD">Dólar ($)</option>
+                            <option value="BRL">Real (R$)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Categoria</label>
+                    <select id="modal-disney-category" class="w-full border p-2 rounded-lg">
+                        <option value="Alimentação">🍴 Alimentação</option>
+                        <option value="Ingressos">🎟️ Ingressos</option>
+                        <option value="Compras">🛍️ Compras</option>
+                        <option value="Hospedagem">🏨 Hospedagem</option>
+                        <option value="Transporte">🚗 Transporte</option>
+                        <option value="Outros">✨ Outros</option>
+                    </select>
+                </div>
+
+                <div class="flex gap-3 pt-4">
+                    <button type="button" onclick="closeDisneyModal()"
+                        class="flex-1 bg-gray-200 text-gray-800 py-3 rounded-xl font-bold">Cancelar</button>
+                    <button type="submit"
+                        class="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold shadow-lg">Salvar
+                        Alterações</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <div id="tab-disney" class="hidden container mx-auto p-4 md:p-8">
+        <div class="bg-blue-50 border-l-4 border-blue-500 p-4 mb-6 rounded flex justify-between items-center">
+            <p class="text-blue-700 font-bold">Cotação Fixa: US$ 1.00 = R$ 5,45</p>
+        </div>
+
+        <div class="bg-white p-6 rounded-xl shadow-lg mb-6 border border-gray-100">
+            <h2 id="disney-form-title" class="text-lg font-bold mb-4 text-gray-800">Nova Compra Disney</h2>
+
+            <input type="hidden" id="disney-edit-id" value="">
+
+            <form id="disney-form" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <input type="date" id="disney-date" class="border p-2 rounded-lg" required>
+                <input type="text" id="disney-desc" placeholder="Descrição da compra" class="border p-2 rounded-lg"
+                    required>
+
+                <div class="flex gap-1">
+                    <input type="number" id="disney-value" placeholder="Valor" step="0.01"
+                        class="border p-2 rounded-l-lg w-full" required>
+                    <select id="disney-currency" class="border-y border-r p-1 rounded-r-lg bg-gray-50 font-bold">
+                        <option value="USD">USD ($)</option>
+                        <option value="BRL">BRL (R$)</option>
+                    </select>
+                </div>
+
+                <select id="disney-responsible" class="border p-2 rounded-lg bg-white" required>
+                    <option value="" disabled selected>Quem pagou?</option>
+                    <option value="Kevin">Kevin</option>
+                    <option value="Any">Any</option>
+                    <option value="Conjunto">Conjunto</option>
+                    <option value="Maria Vitoria">Maria Vitoria</option>
+                </select>
+
+                <select id="disney-category" class="border p-2 rounded-lg bg-white">
+                    <option value="Alimentação">🍴 Alimentação</option>
+                    <option value="Compras">🛍️ Compras</option>
+                    <option value="Presente">🎁 Presente</option>
+                    <option value="Transporte">🚗 Transporte</option>
+                    <option value="Outros">✨ Outros</option>
+                </select>
+
+                <div class="flex gap-2">
+                    <button type="submit" id="disney-submit-btn"
+                        class="flex-1 bg-blue-600 text-white rounded-lg font-bold py-2">Salvar</button>
+                    <button type="button" id="disney-cancel-btn"
+                        class="hidden bg-gray-400 text-white rounded-lg font-bold px-4 py-2"
+                        onclick="cancelDisneyEdit()">Cancelar</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div class="bg-white border p-4 rounded-xl shadow-sm">
+                <h3 class="text-xs font-bold text-gray-500 uppercase">Gasto em Dólar (Efetivo)</h3>
+                <p id="total-disney-only-usd" class="text-2xl font-bold text-green-600">US$ 0,00</p>
+            </div>
+            <div class="bg-white border p-4 rounded-xl shadow-sm">
+                <h3 class="text-xs font-bold text-gray-500 uppercase">Gasto em Real (Efetivo)</h3>
+                <p id="total-disney-only-brl" class="text-2xl font-bold text-blue-600">R$ 0,00</p>
+            </div>
+            <div class="bg-blue-600 p-4 rounded-xl shadow-md text-white">
+                <h3 class="text-xs font-bold uppercase opacity-80">Total Geral (Convertido R$)</h3>
+                <p id="total-disney-general-brl" class="text-2xl font-bold">R$ 0,00</p>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+            <div id="disney-user-summary" class="flex flex-col gap-4">
+            </div>
+            <!-- <div id="disney-user-summary" class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        </div> -->
+
+            <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-lg border-t-4 border-yellow-500 mb-6">
+                <div class="flex flex-col md:flex-row justify-between items-center mb-4 border-b pb-2 gap-4">
+                    <h3 class="text-xl font-bold text-gray-800">Distribuição de Despesas Disney</h3>
+
+                    <div class="flex items-center gap-2">
+                        <select id="filter-disney-responsible" onchange="filterDisneyDisplay()"
+                            class="bg-gray-50 border-none text-gray-600 text-sm rounded-lg p-2 outline-none">
+                            <option value="Todos">Todos</option>
+                            <option value="Any">Any</option>
+                            <option value="Kevin">Kevin</option>
+                            <option value="Conjunto">Conjunto</option>
+                            <option value="Maria Vitoria">Maria Vitoria</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div id="disneyChartContainer" class="w-full h-80 flex items-center justify-center">
+                        <canvas id="disney-chart-canvas"></canvas>
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <h4 class="font-semibold mb-2 text-gray-700">Gastos por Categoria (R$)</h4>
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th
+                                        class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Categoria</th>
+                                    <th
+                                        class="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Total</th>
+                                </tr>
+                            </thead>
+                            <tbody id="disney-category-body"
+                                class="bg-white divide-y divide-gray-200 text-sm text-gray-700">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+            <table class="w-full text-left text-sm" id="disney-table">
+                <thead class="bg-gray-50 border-b border-gray-100">
+                    <tr>
+                        <th class="p-4 font-bold text-gray-400 uppercase text-xs">Data</th>
+                        <th class="p-4 font-bold text-gray-400 uppercase text-xs">Descrição</th>
+                        <th class="p-4 font-bold text-gray-400 uppercase text-xs">Responsável</th>
+                        <th class="p-4 font-bold text-gray-400 uppercase text-xs">Categoria</th>
+                        <th class="p-4 text-right font-bold text-gray-400 uppercase text-xs">Valor USD</th>
+                        <th class="p-4 text-right font-bold text-gray-400 uppercase text-xs">Valor BRL</th>
+                        <th class="p-4 text-center font-bold text-gray-400 uppercase text-xs">Ações</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-50"></tbody>
+            </table>
         </div>
     </div>
     <div id="tab-main">

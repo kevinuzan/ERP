@@ -14,6 +14,7 @@ const COLLECTION_NAME = "transactions";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 let individualCollection;
+let disneyCollection;
 // Substitua esta string pela sua URI de conexão do MongoDB
 const MONGO_URI = process.env.MONGO_PUBLIC_URL || "SUA_URI_LOCAL_DE_TESTE";
 
@@ -183,6 +184,7 @@ async function connectDB() {
         const db = client.db(DB_NAME);
         transactionsCollection = db.collection(COLLECTION_NAME);
         individualCollection = db.collection("individual_expenses"); // Nova coleção
+        disneyCollection = db.collection("disney_expenses");
         console.log(`Conectado ao MongoDB: DB '${DB_NAME}'`);
 
         app.listen(PORT, () => {
@@ -373,14 +375,14 @@ app.put('/api/individual/:id', async (req, res) => {
         const { description, value, owner, date, category } = req.body;
         await individualCollection.updateOne(
             { _id: new ObjectId(req.params.id) },
-            { 
-                $set: { 
-                    description, 
-                    value: parseFloat(value), 
-                    owner, 
+            {
+                $set: {
+                    description,
+                    value: parseFloat(value),
+                    owner,
                     date: new Date(date),
-                    category 
-                } 
+                    category
+                }
             }
         );
         res.json({ success: true });
@@ -427,6 +429,31 @@ app.delete('/api/individual/:id', async (req, res) => {
     } catch (error) {
         res.status(500).json({ error: "Erro ao excluir" });
     }
+});
+
+// Rotas Disney
+app.get('/api/disney', async (req, res) => {
+    const expenses = await disneyCollection.find().sort({ date: -1 }).toArray();
+    res.json(expenses);
+});
+
+app.post('/api/disney', async (req, res) => {
+    const newExpense = { ...req.body, date: new Date(req.body.date) };
+    await disneyCollection.insertOne(newExpense);
+    res.status(201).json({ success: true });
+});
+
+app.put('/api/disney/:id', async (req, res) => {
+    const id = req.params.id;
+    const update = { ...req.body, date: new Date(req.body.date) };
+    delete update._id;
+    await disneyCollection.updateOne({ _id: new ObjectId(id) }, { $set: update });
+    res.json({ success: true });
+});
+
+app.delete('/api/disney/:id', async (req, res) => {
+    await disneyCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+    res.json({ success: true });
 });
 
 // --- ROTA 2: Detalhamento por Categoria (GET /api/breakdown) ---

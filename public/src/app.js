@@ -7,7 +7,8 @@ const SUMMARY_API_URL = `${API_BASE_URL}/summary`;
 const MONTHLY_LIST_API_URL = `${API_BASE_URL}/transactions/monthly-list`;
 const BREAKDOWN_API_URL = `${API_BASE_URL}/breakdown`; // Nova Rota para o Gráfico
 const CLEAN_API_URL = `${API_BASE_URL}/data/clean?confirm=I_AM_SURE`;
-
+const COTACAO_FIXA = 5.45;
+const DISNEY_API_URL = `${API_BASE_URL}/disney`;
 let currentDisplayDate = new Date();
 let expenseChart = null; // Instância global para o gráfico Chart.js
 
@@ -327,11 +328,261 @@ function closeIndModal() {
     document.getElementById('modal-edit-ind').classList.add('hidden');
 }
 
+let disneyChart = null;
+let allDisneyData = [];
+async function loadDisneyData() {
+    
+    document.getElementById('disney-date').value = new Date().toISOString().split('T')[0];
+    try {
+        const res = await fetch(DISNEY_API_URL);
+        allDisneyData = await res.json();
+        filterDisneyDisplay(); // Chama a função que renderiza tabela e gráfico
+    } catch (err) {
+        console.error("Erro ao carregar dados Disney:", err);
+    }
+}
+// Cores padrão do seu sistema para manter a identidade
+const chartColors = ['#2563eb', '#3b82f6', '#60a5fa', '#93c5fd', '#bfdbfe', '#dbeafe'];
+
+function filterDisneyDisplay() {
+    const filter = document.getElementById('filter-disney-responsible').value;
+    
+    // Filtro dos dados
+    const filteredData = filter === 'Todos' 
+        ? allDisneyData 
+        : allDisneyData.filter(item => item.responsible === filter);
+
+    const categoryTotals = {};
+    const userTotals = { "Kevin": 0, "Any": 0, "Conjunto": 0, "Maria Vitoria": 0};
+    let sumUSD = 0;
+    let sumBRL = 0;
+    let totalGeneralBRL = 0;
+
+    // Tabela Principal de Gastos
+    const tbody = document.querySelector('#disney-table tbody');
+    tbody.innerHTML = '';
+
+    filteredData.forEach(item => {
+        // Acumular totais para os cards superiores
+        if (item.originalCurrency === 'USD') sumUSD += item.originalValue;
+        if (item.originalCurrency === 'BRL') sumBRL += item.originalValue;
+        totalGeneralBRL += item.valueBRL;
+
+        // Acumular categorias (usado para gráfico e tabela lateral)
+        categoryTotals[item.category] = (categoryTotals[item.category] || 0) + item.valueBRL;
+
+        // Acumular por usuário (usado para os cards de resumo por pessoa)
+        if (userTotals.hasOwnProperty(item.responsible)) {
+            userTotals[item.responsible] += item.valueBRL;
+        }
+
+        const row = tbody.insertRow();
+        row.innerHTML = `
+            <td class="p-4 text-gray-500">${new Date(item.date).toLocaleDateString('pt-BR')}</td>
+            <td class="p-4 font-bold text-gray-800">${item.description}</td>
+            <td class="p-4"><span class="text-blue-600 font-bold text-xs uppercase">${item.responsible}</span></td>
+            <td class="p-4 text-xs text-gray-500 uppercase font-semibold">${item.category}</td>
+            <td class="p-4 text-right font-mono text-green-600 font-bold">US$ ${item.valueUSD.toFixed(2)}</td>
+            <td class="p-4 text-right font-mono text-blue-800 font-bold">R$ ${item.valueBRL.toFixed(2)}</td>
+            <td class="p-4 text-center space-x-2">
+                <button onclick="editDisneyExpense('${item._id}')" class="text-blue-500">✏️</button>
+                <button onclick="deleteDisneyExpense('${item._id}')" class="text-red-500 font-bold">✕</button>
+            </td>
+        `;
+    });
+
+    // 1. Atualiza Cards de Totais
+    document.getElementById('total-disney-only-usd').textContent = `US$ ${sumUSD.toFixed(2)}`;
+    document.getElementById('total-disney-only-brl').textContent = `R$ ${sumBRL.toFixed(2)}`;
+    document.getElementById('total-disney-general-brl').textContent = `R$ ${totalGeneralBRL.toFixed(2)}`;
+
+    // 2. Atualiza Tabela Lateral de Categorias
+    renderDisneyCategoryTable(categoryTotals);
+
+    // 3. Atualiza Resumo por Usuário
+    renderDisneyUserSummary(userTotals);
+    
+    // 4. Atualiza Gráfico de Pizza
+    updateDisneyPieChart(categoryTotals);
+}
+
+function renderDisneyCategoryTable(totals) {
+    const tbody = document.getElementById('disney-category-body');
+    tbody.innerHTML = '';
+
+    // Ordenar categorias do maior para o menor gasto
+    const sorted = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+
+    sorted.forEach(([cat, val]) => {
+        const row = tbody.insertRow();
+        row.innerHTML = `
+            <td class="px-3 py-2 text-left font-medium text-gray-700">${cat}</td>
+            <td class="px-3 py-2 text-right font-mono font-bold text-gray-900">R$ ${val.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</td>
+        `;
+    });
+}
+
+function updateDisneyPieChart(totals) {
+    const ctx = document.getElementById('disney-chart-canvas').getContext('2d');
+    if (disneyChart) disneyChart.destroy();
+
+    disneyChart = new Chart(ctx, {
+        type: 'pie', // Alterado para Pizza
+        data: {
+            labels: Object.keys(totals),
+            datasets: [{
+                data: Object.values(totals),
+                backgroundColor: ['#FBBF24', '#3B82F6', '#EF4444', '#10B981', '#8B5CF6', '#EC4899'],
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: { boxWidth: 12, font: { size: 10 } }
+                }
+            }
+        }
+    });
+}
+
+function renderDisneyUserSummary(totals) {
+    const container = document.getElementById('disney-user-summary');
+    container.innerHTML = '';
+
+    Object.entries(totals).forEach(([user, total]) => {
+        const div = document.createElement('div');
+        div.className = "flex justify-between items-center p-3 bg-gray-50 rounded-xl border border-gray-100";
+        div.innerHTML = `
+            <div class="flex items-center gap-3">
+                <div class="w-2 h-2 rounded-full bg-blue-600"></div>
+                <span class="text-sm font-bold text-gray-700">${user}</span>
+            </div>
+            <div class="text-right">
+                <p class="text-xs text-gray-400 uppercase font-bold">Total Gasto (R$)</p>
+                <p class="text-sm font-mono font-bold text-blue-700">R$ ${total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+            </div>
+        `;
+        container.appendChild(div);
+    });
+}
+
+// Salvar / Atualizar
+document.getElementById('disney-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const id = document.getElementById('disney-edit-id').value;
+    const value = parseFloat(document.getElementById('disney-value').value);
+    const currency = document.getElementById('disney-currency').value;
+
+    const data = {
+        date: document.getElementById('disney-date').value,
+        description: document.getElementById('disney-desc').value,
+        responsible: document.getElementById('disney-responsible').value,
+        category: document.getElementById('disney-category').value,
+        originalValue: value,
+        originalCurrency: currency,
+        valueUSD: currency === 'USD' ? value : value / COTACAO_FIXA,
+        valueBRL: currency === 'BRL' ? value : value * COTACAO_FIXA
+    };
+
+    const method = id ? 'PUT' : 'POST';
+    const url = id ? `${DISNEY_API_URL}/${id}` : DISNEY_API_URL;
+
+    await fetch(url, {
+        method: method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    });
+    cancelDisneyEdit();
+    loadDisneyData();
+});
+
+// Função para abrir o modal e carregar os dados
+async function editDisneyExpense(id) {
+    const res = await fetch(DISNEY_API_URL);
+    const items = await res.json();
+    const item = items.find(i => i._id === id);
+
+    if (item) {
+        document.getElementById('modal-disney-id').value = item._id;
+        document.getElementById('modal-disney-date').value = item.date.split('T')[0];
+        document.getElementById('modal-disney-desc').value = item.description;
+        document.getElementById('modal-disney-value').value = item.originalValue;
+        document.getElementById('modal-disney-currency').value = item.originalCurrency;
+        document.getElementById('modal-disney-responsible').value = item.responsible;
+        document.getElementById('modal-disney-category').value = item.category;
+
+        document.getElementById('disney-modal').classList.remove('hidden');
+    }
+}
+
+// Fechar Modal
+function closeDisneyModal() {
+    document.getElementById('disney-modal').classList.add('hidden');
+    document.getElementById('disney-modal-form').reset();
+}
+
+// Lógica de envio do FORMULÁRIO DO MODAL
+document.getElementById('disney-modal-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const id = document.getElementById('modal-disney-id').value;
+    const value = parseFloat(document.getElementById('modal-disney-value').value);
+    const currency = document.getElementById('modal-disney-currency').value;
+
+    const data = {
+        date: document.getElementById('modal-disney-date').value,
+        description: document.getElementById('modal-disney-desc').value,
+        responsible: document.getElementById('modal-disney-responsible').value,
+        category: document.getElementById('modal-disney-category').value,
+        originalValue: value,
+        originalCurrency: currency,
+        valueUSD: currency === 'USD' ? value : value / COTACAO_FIXA,
+        valueBRL: currency === 'BRL' ? value : value * COTACAO_FIXA
+    };
+
+    try {
+        const response = await fetch(`${DISNEY_API_URL}/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+
+        if (response.ok) {
+            closeDisneyModal();
+            loadDisneyData(); // Recarrega a tabela e os totais
+            showNotification("Gasto atualizado com sucesso!");
+        }
+    } catch (err) {
+        showNotification("Erro ao atualizar gasto.", true);
+    }
+});
+
+function cancelDisneyEdit() {
+    document.getElementById('disney-form').reset();
+    document.getElementById('disney-edit-id').value = "";
+    document.getElementById('disney-form-title').textContent = "Nova Compra Disney";
+    document.getElementById('disney-submit-btn').textContent = "Salvar";
+    document.getElementById('disney-submit-btn').classList.replace('bg-orange-500', 'bg-blue-600');
+    document.getElementById('disney-cancel-btn').classList.add('hidden');
+}
+
+async function deleteDisneyExpense(id) {
+    if (confirm("Deseja excluir este gasto da Disney?")) {
+        await fetch(`${DISNEY_API_URL}/${id}`, { method: 'DELETE' });
+        loadDisneyData();
+    }
+}
+
 function switchTab(tab) {
     const mainTab = document.getElementById('tab-main');
     const indTab = document.getElementById('tab-individual');
+    const disneyTab = document.getElementById('tab-disney');
     const btnMain = document.getElementById('btn-tab-main');
     const btnInd = document.getElementById('btn-tab-individual');
+    const disneyInd = document.getElementById('btn-tab-disney');
 
     // Classes para o botão ATIVO
     const activeClasses = ['bg-blue-600', 'text-white', 'shadow-md'];
@@ -342,6 +593,7 @@ function switchTab(tab) {
         // Exibir conteúdo
         mainTab.classList.remove('hidden');
         indTab.classList.add('hidden');
+        disneyTab.classList.add('hidden');
 
         // Estilizar botões
         btnMain.classList.add(...activeClasses);
@@ -349,9 +601,14 @@ function switchTab(tab) {
 
         btnInd.classList.add(...inactiveClasses);
         btnInd.classList.remove(...activeClasses);
-    } else {
+
+        disneyInd.classList.add(...inactiveClasses);
+        disneyInd.classList.remove(...activeClasses);
+
+    } else if (tab === 'individual') {
         // Exibir conteúdo
         mainTab.classList.add('hidden');
+        disneyTab.classList.add('hidden');
         indTab.classList.remove('hidden');
 
         // Estilizar botões
@@ -361,10 +618,28 @@ function switchTab(tab) {
         btnMain.classList.add(...inactiveClasses);
         btnMain.classList.remove(...activeClasses);
 
+        disneyInd.classList.add(...inactiveClasses);
+        disneyInd.classList.remove(...activeClasses);
         // Carrega os dados da aba individual
         if (typeof loadIndividualData === 'function') {
             loadIndividualData();
         }
+    } else if (tab === 'disney') {
+        // Exibir conteúdo
+        mainTab.classList.add('hidden');
+        indTab.classList.add('hidden');
+        disneyTab.classList.remove('hidden');
+
+        // Estilizar botões
+        btnInd.classList.add(...inactiveClasses);
+        btnInd.classList.remove(...activeClasses);
+
+        btnMain.classList.add(...inactiveClasses);
+        btnMain.classList.remove(...activeClasses);
+
+        disneyInd.classList.add(...activeClasses);
+        disneyInd.classList.remove(...inactiveClasses);
+        loadDisneyData()
     }
 }
 
