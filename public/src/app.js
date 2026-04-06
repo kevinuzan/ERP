@@ -596,37 +596,57 @@ function toggleConsorcioView(view) {
         btnChart.className = "py-1 px-4 rounded-md text-xs font-bold transition-all text-gray-500";
     }
 }
-
-// Função para atualizar o valor em R$ baseado no %
+// 1. Quando mudar a % do Ágio, calcula o valor em R$ do Ágio
 function atualizarAgioPorPercentual() {
-    // Adicionamos uma verificação: se o elemento não existir, usamos o valor padrão da sua carta
     const elValorCarta = document.getElementById('cons-valor-carta');
     const elPercent = document.getElementById('cons-percent-venda');
     const elAgioRes = document.getElementById('cons-venda-agio');
 
-    // Se algum deles for null, a função para aqui sem dar erro no console
     if (!elValorCarta || !elPercent || !elAgioRes) return;
 
     const valorCarta = parseFloat(elValorCarta.value) || 55042.60;
     const percent = parseFloat(elPercent.value) / 100;
-
     const novoAgio = valorCarta * percent;
 
     elAgioRes.value = novoAgio.toFixed(2);
-
-    // Atualiza o label visual se ele existir
+    
+    // Atualiza o label visual do %
     const label = document.getElementById('label-percent-venda');
     if (label) label.innerText = (percent * 100).toFixed(1) + "%";
 
+    // Recalcula a comissão baseada no NOVO ágio e depois roda a simulação
+    executarCalculosEmCadeia();
+}
+
+// 2. Quando mudar a % da Comissão, calcula o valor em R$ da Comissão
+function atualizarComissaoPorPercentual() {
+    const elAgio = document.getElementById('cons-venda-agio');
+    const elPercentCom = document.getElementById('cons-percent-comissao');
+    const elValorCom = document.getElementById('cons-valor-comissao');
+
+    if (!elAgio || !elPercentCom || !elValorCom) return;
+
+    const vendaAgio = parseFloat(elAgio.value) || 0;
+    const percentComissao = parseFloat(elPercentCom.value) / 100;
+    
+    const valorComissao = vendaAgio * percentComissao;
+    elValorCom.value = valorComissao.toFixed(2);
+
+    // Roda a simulação
     calcularSimulacaoReal();
 }
-function atualizarComissaoPorPercentual() {
+
+// 3. Função auxiliar para evitar o loop infinito
+// Chamada quando o Ágio muda, pois a comissão depende do valor do ágio
+function executarCalculosEmCadeia() {
+    // Primeiro atualiza a comissão (valor R$) baseado no ágio atual
     const vendaAgio = parseFloat(document.getElementById('cons-venda-agio').value) || 0;
     const percentComissao = parseFloat(document.getElementById('cons-percent-comissao').value) / 100;
-
     const valorComissao = vendaAgio * percentComissao;
+    
     document.getElementById('cons-valor-comissao').value = valorComissao.toFixed(2);
 
+    // Depois roda a simulação final
     calcularSimulacaoReal();
 }
 // Ajuste na função principal para considerar o Valor Total
