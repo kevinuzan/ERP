@@ -331,7 +331,7 @@ function closeIndModal() {
 let disneyChart = null;
 let allDisneyData = [];
 async function loadDisneyData() {
-    
+
     document.getElementById('disney-date').value = new Date().toISOString().split('T')[0];
     try {
         const res = await fetch(DISNEY_API_URL);
@@ -346,14 +346,14 @@ const chartColors = ['#2563eb', '#3b82f6', '#60a5fa', '#93c5fd', '#bfdbfe', '#db
 
 function filterDisneyDisplay() {
     const filter = document.getElementById('filter-disney-responsible').value;
-    
+
     // Filtro dos dados
-    const filteredData = filter === 'Todos' 
-        ? allDisneyData 
+    const filteredData = filter === 'Todos'
+        ? allDisneyData
         : allDisneyData.filter(item => item.responsible === filter);
 
     const categoryTotals = {};
-    const userTotals = { "Kevin": 0, "Any": 0, "Conjunto": 0, "Maria Vitoria": 0};
+    const userTotals = { "Kevin": 0, "Any": 0, "Conjunto": 0, "Maria Vitoria": 0 };
     let sumUSD = 0;
     let sumBRL = 0;
     let totalGeneralBRL = 0;
@@ -401,7 +401,7 @@ function filterDisneyDisplay() {
 
     // 3. Atualiza Resumo por Usuário
     renderDisneyUserSummary(userTotals);
-    
+
     // 4. Atualiza Gráfico de Pizza
     updateDisneyPieChart(categoryTotals);
 }
@@ -417,7 +417,7 @@ function renderDisneyCategoryTable(totals) {
         const row = tbody.insertRow();
         row.innerHTML = `
             <td class="px-3 py-2 text-left font-medium text-gray-700">${cat}</td>
-            <td class="px-3 py-2 text-right font-mono font-bold text-gray-900">R$ ${val.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</td>
+            <td class="px-3 py-2 text-right font-mono font-bold text-gray-900">R$ ${val.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
         `;
     });
 }
@@ -576,6 +576,166 @@ async function deleteDisneyExpense(id) {
     }
 }
 
+let consorcioChart = null;
+// Função para alternar entre Gráfico e Tabela
+function toggleConsorcioView(view) {
+    const chartContainer = document.getElementById('consorcio-chart-container');
+    const tableContainer = document.getElementById('consorcio-table-container');
+    const btnChart = document.getElementById('btn-view-chart');
+    const btnTable = document.getElementById('btn-view-table');
+
+    if (view === 'chart') {
+        chartContainer.classList.remove('hidden');
+        tableContainer.classList.add('hidden');
+        btnChart.className = "py-1 px-4 rounded-md text-xs font-bold transition-all bg-white shadow-sm text-blue-600";
+        btnTable.className = "py-1 px-4 rounded-md text-xs font-bold transition-all text-gray-500";
+    } else {
+        chartContainer.classList.add('hidden');
+        tableContainer.classList.remove('hidden');
+        btnTable.className = "py-1 px-4 rounded-md text-xs font-bold transition-all bg-white shadow-sm text-blue-600";
+        btnChart.className = "py-1 px-4 rounded-md text-xs font-bold transition-all text-gray-500";
+    }
+}
+
+// Função para atualizar o valor em R$ baseado no %
+function atualizarAgioPorPercentual() {
+    // Adicionamos uma verificação: se o elemento não existir, usamos o valor padrão da sua carta
+    const elValorCarta = document.getElementById('cons-valor-carta');
+    const elPercent = document.getElementById('cons-percent-venda');
+    const elAgioRes = document.getElementById('cons-venda-agio');
+
+    // Se algum deles for null, a função para aqui sem dar erro no console
+    if (!elValorCarta || !elPercent || !elAgioRes) return;
+
+    const valorCarta = parseFloat(elValorCarta.value) || 55042.60;
+    const percent = parseFloat(elPercent.value) / 100;
+
+    const novoAgio = valorCarta * percent;
+
+    elAgioRes.value = novoAgio.toFixed(2);
+
+    // Atualiza o label visual se ele existir
+    const label = document.getElementById('label-percent-venda');
+    if (label) label.innerText = (percent * 100).toFixed(1) + "%";
+
+    calcularSimulacaoReal();
+}
+function atualizarComissaoPorPercentual() {
+    const vendaAgio = parseFloat(document.getElementById('cons-venda-agio').value) || 0;
+    const percentComissao = parseFloat(document.getElementById('cons-percent-comissao').value) / 100;
+
+    const valorComissao = vendaAgio * percentComissao;
+    document.getElementById('cons-valor-comissao').value = valorComissao.toFixed(2);
+
+    calcularSimulacaoReal();
+}
+// Ajuste na função principal para considerar o Valor Total
+function calcularSimulacaoReal() {
+    const mesContemplacao = parseInt(document.getElementById('cons-mes-contemplacao').value);
+    const parcelaPre = parseFloat(document.getElementById('cons-parcela-pre').value);
+    const parcelaPos = parseFloat(document.getElementById('cons-parcela-pos').value);
+    const lance = parseFloat(document.getElementById('cons-lance').value);
+    const vendaAgio = parseFloat(document.getElementById('cons-venda-agio').value);
+
+    // Investimento Inicial (Lance + Parcelas até contemplar)
+    // Se contemplou no mês 1, você pagou Lance + 1 Parcela Pré
+    const custoAquisicao = lance + (mesContemplacao * parcelaPre);
+    // NOVO: Valor da Comissão
+    const valorComissao = parseFloat(document.getElementById('cons-valor-comissao').value) || 0;
+    const tbody = document.getElementById('consorcio-table-body');
+    tbody.innerHTML = '';
+
+    let mesesLabels = [];
+    let lucroPorMes = [];
+    let lucroPorMes2 = [];
+
+    for (let m = 0; m <= 24; m++) {
+        // Custo acumulado das parcelas após a contemplação
+        let custoManutencaoPos = m * parcelaPos;
+
+        // TOTAL INVESTIDO ATÉ O MÊS ATUAL
+        let totalInvestidoAcumulado = custoAquisicao + custoManutencaoPos;
+
+        // LUCRO LÍQUIDO = Valor da Venda - Tudo o que saiu do bolso
+        let lucroLiquido = vendaAgio - totalInvestidoAcumulado - valorComissao;
+
+        let roi = (lucroLiquido / totalInvestidoAcumulado) * 100;
+
+        mesesLabels.push(m === 0 ? "Venda Imediata" : `+${m} m`);
+        lucroPorMes.push(lucroLiquido.toFixed(2));
+
+        let lucroLiquido2 = vendaAgio - totalInvestidoAcumulado - valorComissao;
+        lucroPorMes2.push(lucroLiquido2.toFixed(2));
+        const corTexto = lucroLiquido >= 0 ? "text-green-600" : "text-red-600";
+
+        const row = `
+            <tr class="border-b border-gray-50">
+                <td class="py-3 text-gray-500 font-medium">${m === 0 ? "Venda Imediata" : "Após " + m + " meses"}</td>
+                <td class="py-3 text-right text-gray-900">R$ ${totalInvestidoAcumulado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                <td class="py-3 text-right text-gray-400">R$ ${custoManutencaoPos.toLocaleString('pt-BR')}</td>
+                <td class="py-3 text-right ${corTexto} font-bold">R$ ${lucroLiquido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                <td class="py-3 text-right ${corTexto}">${roi.toFixed(1)}%</td>
+            </tr>
+        `;
+        tbody.innerHTML += row;
+    }
+    const lucroHoje = parseFloat(lucroPorMes2[0]);
+    // Ponto de Equilíbrio (Break-even)
+    const mesPrejuizo = lucroPorMes.findIndex(l => parseFloat(l) < 0);
+    const alertaEl = document.getElementById('cons-alerta-tempo');
+
+    if (mesPrejuizo !== -1) {
+        alertaEl.innerText = `⚠️ Atenção: Se não vender em ${mesPrejuizo} meses após contemplar, você começa a perder dinheiro.`;
+        alertaEl.className = "mt-2 text-sm font-bold text-red-600 bg-red-50 p-2 rounded";
+    } else {
+        alertaEl.innerText = `✅ Operação segura: O ágio cobre os custos por mais de 2 anos.`;
+        alertaEl.className = "mt-2 text-sm font-bold text-green-600 bg-green-50 p-2 rounded";
+    }
+    // Atualiza os cards de resumo e o gráfico como antes
+    document.getElementById('cons-invest-inicial').innerText = custoAquisicao.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    document.getElementById('cons-feedback-lucro').innerText = lucroHoje.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    renderizarGraficoConsorcio(mesesLabels, lucroPorMes);
+}
+// Reutilizando a função de gráfico anterior com melhorias
+function renderizarGraficoConsorcio(labels, dataLucro) {
+    const ctx = document.getElementById('consorcioChart').getContext('2d');
+    if (window.consorcioChartInstance) window.consorcioChartInstance.destroy();
+
+    window.consorcioChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Lucro Líquido na Venda (R$)',
+                data: dataLucro,
+                borderColor: '#10b981',
+                backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                fill: true,
+                pointRadius: 5,
+                pointHoverRadius: 8
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    beginAtZero: false,
+                    grid: { color: '#e5e7eb' }
+                }
+            },
+            plugins: {
+                tooltip: {
+                    callbacks: {
+                        label: (context) => `Lucro se vender: R$ ${parseFloat(context.raw).toLocaleString('pt-BR')}`
+                    }
+                }
+            }
+        }
+    });
+}
+
+
 function switchTab(tab) {
     const mainTab = document.getElementById('tab-main');
     const indTab = document.getElementById('tab-individual');
@@ -583,6 +743,8 @@ function switchTab(tab) {
     const btnMain = document.getElementById('btn-tab-main');
     const btnInd = document.getElementById('btn-tab-individual');
     const disneyInd = document.getElementById('btn-tab-disney');
+    const btnconsorc = document.getElementById('btn-tab-consorcio');
+    const consorc = document.getElementById('tab-consorcio'); // ADICIONE ESTA LINHA
 
     // Classes para o botão ATIVO
     const activeClasses = ['bg-blue-600', 'text-white', 'shadow-md'];
@@ -594,6 +756,7 @@ function switchTab(tab) {
         mainTab.classList.remove('hidden');
         indTab.classList.add('hidden');
         disneyTab.classList.add('hidden');
+        consorc.classList.add('hidden');
 
         // Estilizar botões
         btnMain.classList.add(...activeClasses);
@@ -605,11 +768,16 @@ function switchTab(tab) {
         disneyInd.classList.add(...inactiveClasses);
         disneyInd.classList.remove(...activeClasses);
 
+
+        btnconsorc.classList.add(...inactiveClasses);
+        btnconsorc.classList.remove(...activeClasses);
+
     } else if (tab === 'individual') {
         // Exibir conteúdo
         mainTab.classList.add('hidden');
         disneyTab.classList.add('hidden');
         indTab.classList.remove('hidden');
+        consorc.classList.add('hidden');
 
         // Estilizar botões
         btnInd.classList.add(...activeClasses);
@@ -620,6 +788,10 @@ function switchTab(tab) {
 
         disneyInd.classList.add(...inactiveClasses);
         disneyInd.classList.remove(...activeClasses);
+
+
+        btnconsorc.classList.add(...inactiveClasses);
+        btnconsorc.classList.remove(...activeClasses);
         // Carrega os dados da aba individual
         if (typeof loadIndividualData === 'function') {
             loadIndividualData();
@@ -629,6 +801,7 @@ function switchTab(tab) {
         mainTab.classList.add('hidden');
         indTab.classList.add('hidden');
         disneyTab.classList.remove('hidden');
+        consorc.classList.add('hidden');
 
         // Estilizar botões
         btnInd.classList.add(...inactiveClasses);
@@ -639,7 +812,32 @@ function switchTab(tab) {
 
         disneyInd.classList.add(...activeClasses);
         disneyInd.classList.remove(...inactiveClasses);
+
+        btnconsorc.classList.add(...inactiveClasses);
+        btnconsorc.classList.remove(...activeClasses);
         loadDisneyData()
+    } else if (tab === 'consorcio') {
+        // Exibir conteúdo
+        mainTab.classList.add('hidden');
+        disneyTab.classList.add('hidden');
+        indTab.classList.add('hidden');
+        consorc.classList.remove('hidden');
+
+        // Estilizar botões
+        btnInd.classList.add(...inactiveClasses);
+        btnInd.classList.remove(...activeClasses);
+
+        btnMain.classList.add(...inactiveClasses);
+        btnMain.classList.remove(...activeClasses);
+
+        disneyInd.classList.add(...inactiveClasses);
+        disneyInd.classList.remove(...activeClasses);
+
+
+        btnconsorc.classList.add(...activeClasses);
+        btnconsorc.classList.remove(...inactiveClasses);
+
+        setTimeout(calcularSimulacaoReal, 100); // Timeout pequeno para o Chart.js ler o tamanho da div
     }
 }
 

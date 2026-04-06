@@ -15,6 +15,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 let individualCollection;
 let disneyCollection;
+let consorcioCollection;
 // Substitua esta string pela sua URI de conexão do MongoDB
 const MONGO_URI = process.env.MONGO_PUBLIC_URL || "SUA_URI_LOCAL_DE_TESTE";
 
@@ -185,6 +186,8 @@ async function connectDB() {
         transactionsCollection = db.collection(COLLECTION_NAME);
         individualCollection = db.collection("individual_expenses"); // Nova coleção
         disneyCollection = db.collection("disney_expenses");
+        // Dentro da função de conexão ao banco:
+        consorcioCollection = db.collection("consorcio_config");
         console.log(`Conectado ao MongoDB: DB '${DB_NAME}'`);
 
         app.listen(PORT, () => {
@@ -430,6 +433,27 @@ app.delete('/api/individual/:id', async (req, res) => {
         res.status(500).json({ error: "Erro ao excluir" });
     }
 });
+
+
+
+// ROTA: Salvar configuração do consórcio
+app.post('/api/consorcio/config', async (req, res) => {
+    try {
+        const config = req.body;
+        // Atualiza o único documento de configuração ou cria se não existir
+        await consorcioCollection.updateOne({}, { $set: config }, { upsert: true });
+        res.json({ message: "Configuração do consórcio salva!" });
+    } catch (error) {
+        res.status(500).json({ error: "Erro ao salvar dados do consórcio." });
+    }
+});
+
+// ROTA: Buscar configuração
+app.get('/api/consorcio/config', async (req, res) => {
+    const config = await consorcioCollection.findOne({});
+    res.json(config || {});
+});
+
 
 // Rotas Disney
 app.get('/api/disney', async (req, res) => {

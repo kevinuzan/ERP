@@ -68,6 +68,10 @@
                 class="py-2 px-6 rounded-lg text-sm font-bold transition-all duration-300">
                 Individual
             </button>
+            <button id="btn-tab-consorcio" onclick="switchTab('consorcio')"
+                class="py-2 px-6 rounded-lg text-sm font-bold transition-all duration-300">
+                Consórcio
+            </button>
             <button id="btn-tab-disney" onclick="switchTab('disney')"
                 class="py-2 px-6 rounded-lg text-sm font-bold transition-all duration-300" style="display: none;">
                 Disney
@@ -408,22 +412,26 @@
         </div>
 
         <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-    <div class="overflow-x-auto"> <table class="w-full text-left text-sm min-w-[800px]" id="disney-table">
-            <thead class="bg-gray-50 border-b border-gray-100">
-                <tr>
-                    <th class="p-4 font-bold text-gray-400 uppercase text-xs whitespace-nowrap">Data</th>
-                    <th class="p-4 font-bold text-gray-400 uppercase text-xs whitespace-nowrap">Descrição</th>
-                    <th class="p-4 font-bold text-gray-400 uppercase text-xs whitespace-nowrap">Responsável</th>
-                    <th class="p-4 font-bold text-gray-400 uppercase text-xs whitespace-nowrap">Categoria</th>
-                    <th class="p-4 text-right font-bold text-gray-400 uppercase text-xs whitespace-nowrap">Valor USD</th>
-                    <th class="p-4 text-right font-bold text-gray-400 uppercase text-xs whitespace-nowrap">Valor BRL</th>
-                    <th class="p-4 text-center font-bold text-gray-400 uppercase text-xs whitespace-nowrap">Ações</th>
-                </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-50"></tbody>
-        </table>
-    </div>
-</div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-sm min-w-[800px]" id="disney-table">
+                    <thead class="bg-gray-50 border-b border-gray-100">
+                        <tr>
+                            <th class="p-4 font-bold text-gray-400 uppercase text-xs whitespace-nowrap">Data</th>
+                            <th class="p-4 font-bold text-gray-400 uppercase text-xs whitespace-nowrap">Descrição</th>
+                            <th class="p-4 font-bold text-gray-400 uppercase text-xs whitespace-nowrap">Responsável</th>
+                            <th class="p-4 font-bold text-gray-400 uppercase text-xs whitespace-nowrap">Categoria</th>
+                            <th class="p-4 text-right font-bold text-gray-400 uppercase text-xs whitespace-nowrap">Valor
+                                USD</th>
+                            <th class="p-4 text-right font-bold text-gray-400 uppercase text-xs whitespace-nowrap">Valor
+                                BRL</th>
+                            <th class="p-4 text-center font-bold text-gray-400 uppercase text-xs whitespace-nowrap">
+                                Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-50"></tbody>
+                </table>
+            </div>
+        </div>
 
     </div>
     <div id="tab-main">
@@ -605,7 +613,143 @@
 
         </div>
     </div>
+    <div id="tab-consorcio" class="hidden container mx-auto p-4 md:p-8 text-gray-900">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="bg-white p-6 rounded-xl shadow-md border border-gray-200">
+                <h2 class="text-xl font-bold mb-4 text-blue-600">Configuração do Plano</h2>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Valor da Carta (Crédito R$)</label>
+                        <input type="number" id="cons-valor-carta" value="55042.60" step="0.01"
+                            class="w-full p-2 border border-gray-300 rounded-lg bg-white text-gray-900 focus:ring-2 focus:ring-blue-500 outline-none"
+                            oninput="atualizarAgioPorPercentual()">
+                    </div>
 
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Prazo (Meses)</label>
+                            <input type="number" id="cons-prazo" value="46"
+                                class="w-full p-2 border border-gray-300 rounded-lg bg-white text-gray-900 outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Mês Contemplação</label>
+                            <input type="number" id="cons-mes-contemplacao" value="1"
+                                class="w-full p-2 border border-gray-300 rounded-lg bg-white text-gray-900 outline-none">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Parcela Pré (R$)</label>
+                            <input type="number" id="cons-parcela-pre" value="1411.95" step="0.01"
+                                class="w-full p-2 border border-gray-300 rounded-lg bg-white text-gray-900 outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Parcela Pós (R$)</label>
+                            <input type="number" id="cons-parcela-pos" value="1183.53" step="0.01"
+                                class="w-full p-2 border border-gray-300 rounded-lg bg-white text-gray-900 outline-none">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Lance Pago (R$)</label>
+                        <input type="number" id="cons-lance" value="11690.95" step="0.01"
+                            class="w-full p-2 border border-gray-300 rounded-lg bg-white text-gray-900 outline-none">
+                    </div>
+
+                    <div class="p-4 bg-blue-50 rounded-lg border border-blue-200 mt-4">
+                        <div class="flex justify-between items-center mb-2">
+                            <label class="block text-sm font-bold text-blue-800">Venda baseada no Crédito</label>
+                            <span id="label-percent-venda"
+                                class="text-xs font-bold bg-blue-200 text-blue-800 px-2 py-0.5 rounded">40%</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-[10px] uppercase font-bold text-blue-600">% de Ágio</label>
+                                <input type="number" id="cons-percent-venda" value="40" step="0.1"
+                                    class="w-full p-2 border-2 border-blue-300 rounded-lg font-bold text-gray-900 bg-white"
+                                    oninput="atualizarAgioPorPercentual()">
+                            </div>
+                            <div>
+                                <label class="block text-[10px] uppercase font-bold text-blue-600">Valor Ágio
+                                    (R$)</label>
+                                <input type="number" id="cons-venda-agio" value="22017.04" step="0.01"
+                                    class="w-full p-2 border-2 border-blue-300 rounded-lg font-bold text-gray-900 bg-white"
+                                    oninput="calcularSimulacaoReal()">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-4 mt-3 pt-3 border-t border-blue-200">
+                            <div>
+                                <label class="block text-[10px] uppercase font-bold text-red-600">Comissão (%)</label>
+                                <input type="number" id="cons-percent-comissao" value="0" step="0.1"
+                                    class="w-full p-2 border border-red-200 rounded-lg font-medium text-gray-900 bg-white"
+                                    oninput="atualizarComissaoPorPercentual()">
+                            </div>
+                            <div>
+                                <label class="block text-[10px] uppercase font-bold text-red-600">Comissão (R$)</label>
+                                <input type="number" id="cons-valor-comissao" value="0" step="0.01"
+                                    class="w-full p-2 border border-red-200 rounded-lg font-medium text-gray-900 bg-white"
+                                    oninput="calcularSimulacaoReal()">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <button onclick="calcularSimulacaoReal()"
+                    class="mt-6 w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 shadow-lg active:scale-95">
+                    Atualizar Cálculos
+                </button>
+            </div>
+
+            <div class="space-y-6">
+                <div class="bg-white p-6 rounded-xl shadow-md border border-gray-200 text-center">
+                    <h3 class="text-gray-500 font-medium">Investimento Inicial (Mês 0)</h3>
+                    <div id="cons-invest-inicial" class="text-3xl font-bold text-gray-800">R$ 0,00</div>
+                </div>
+                <div class="bg-white p-6 rounded-xl shadow-md border border-gray-200 text-center">
+                    <h3 class="text-gray-500 font-medium text-lg">Lucro Líquido Estimado</h3>
+                    <div id="cons-feedback-lucro" class="text-5xl font-black text-green-600">R$ 0,00</div>
+                    <p id="cons-alerta-tempo" class="mt-2 text-sm font-semibold"></p>
+                </div>
+            </div>
+        </div>
+
+        <div class="mt-8 bg-white p-6 rounded-xl shadow-md border border-gray-200">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="font-bold text-gray-700">Projeção Detalhada</h3>
+                <div class="flex bg-gray-100 p-1 rounded-lg border border-gray-200">
+                    <button onclick="toggleConsorcioView('chart')" id="btn-view-chart"
+                        class="py-1 px-4 rounded-md text-xs font-bold transition-all bg-white shadow-sm text-blue-600">
+                        Gráfico
+                    </button>
+                    <button onclick="toggleConsorcioView('table')" id="btn-view-table"
+                        class="py-1 px-4 rounded-md text-xs font-bold transition-all text-gray-500">
+                        Tabela
+                    </button>
+                </div>
+            </div>
+
+            <div id="consorcio-chart-container" class="h-[350px]">
+                <canvas id="consorcioChart"></canvas>
+            </div>
+
+            <div id="consorcio-table-container" class="hidden overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="text-gray-400 text-[10px] uppercase tracking-wider border-b border-gray-100">
+                            <th class="pb-3 font-medium text-left">Tempo</th>
+                            <th class="pb-3 font-medium text-right">Total Investido</th>
+                            <th class="pb-3 font-medium text-right">Parcelas Pós</th>
+                            <th class="pb-3 font-medium text-right">Lucro Líquido</th>
+                            <th class="pb-3 font-medium text-right">ROI (%)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="consorcio-table-body" class="text-sm font-semibold text-gray-900">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
     <!-- MODAL DE EDIÇÃO -->
     <div id="editModal" class="modal-overlay hidden">
         <div class="modal-content">
