@@ -89,57 +89,73 @@
 
         <div class="bg-white p-6 rounded-xl shadow-lg mb-6">
             <form id="individual-form"
-                class="grid grid-cols-1 md:grid-cols-6 gap-2 bg-white p-4 rounded-lg shadow mb-6">
-                <input type="date" id="ind-date" class="border p-2 rounded text-sm" required>
-                <input type="text" id="ind-desc" placeholder="Descrição" class="border p-2 rounded text-sm" required>
-                <input type="number" id="ind-value" placeholder="R$" step="0.01" class="border p-2 rounded text-sm"
-                    required>
+                class="flex flex-col lg:flex-row items-end gap-3 bg-white p-4 rounded-xl shadow mb-6 border border-gray-100">
 
-                <select id="ind-category" class="border p-2 rounded text-sm">
-                    <option value="Lazer">Lazer</option>
-                    <option value="Alimentação">Alimentação</option>
-                    <option value="Transporte">Transporte</option>
-                    <option value="Saúde">Saúde</option>
-                    <option value="Trabalho">Trabalho</option>
-                    <option value="Outros">Outros</option>
-                </select>
+                <div class="w-full lg:w-40">
+                    <label class="text-[10px] text-gray-400 font-bold uppercase ml-1">Data</label>
+                    <input type="date" id="ind-date"
+                        class="w-full border border-gray-200 p-2 rounded-lg text-sm focus:border-blue-500 outline-none"
+                        required>
+                </div>
 
-                <div class="col-span-1 md:col-span-6 bg-gray-50 p-3 rounded-xl border border-gray-200 mt-2">
-                    <span class="text-[10px] text-gray-400 uppercase font-black tracking-wider mb-2 block">Dividir conta
-                        com:</span>
+                <div class="w-full flex-1">
+                    <label class="text-[10px] text-gray-400 font-bold uppercase ml-1">Descrição</label>
+                    <input type="text" id="ind-desc" placeholder="Ex: Mercado"
+                        class="w-full border border-gray-200 p-2 rounded-lg text-sm focus:border-blue-500 outline-none"
+                        required>
+                </div>
 
-                    <div class="flex flex-wrap gap-2">
-                        <label class="relative flex-1 cursor-pointer">
+                <div class="w-full lg:w-32">
+                    <label class="text-[10px] text-gray-400 font-bold uppercase ml-1">Valor (R$)</label>
+                    <input type="number" id="ind-value" placeholder="0,00" step="0.01"
+                        class="w-full border border-gray-200 p-2 rounded-lg text-sm focus:border-blue-500 outline-none"
+                        required>
+                </div>
+
+                <div class="w-full lg:w-40">
+                    <label class="text-[10px] text-gray-400 font-bold uppercase ml-1">Categoria</label>
+                    <select id="ind-category"
+                        class="w-full border border-gray-200 p-2 rounded-lg text-sm focus:border-blue-500 outline-none appearance-none bg-white">
+                        <option value="Lazer">Lazer</option>
+                        <option value="Alimentação">Alimentação</option>
+                        <option value="Transporte">Transporte</option>
+                        <option value="Saúde">Saúde</option>
+                        <option value="Trabalho">Trabalho</option>
+                        <option value="Outros">Outros</option>
+                    </select>
+                </div>
+
+                <div class="w-full lg:w-auto min-w-[280px]">
+                    <label class="text-[10px] text-gray-400 font-bold uppercase ml-1">Dividir com:</label>
+                    <div class="flex gap-1 bg-gray-50 p-1 rounded-lg border border-gray-100">
+                        <label class="flex-1 cursor-pointer">
                             <input type="checkbox" name="owner-opt" value="Kevin" class="peer sr-only">
                             <div
-                                class="w-full text-center py-2 px-3 rounded-lg border-2 border-gray-200 text-gray-500 font-bold text-xs transition-all 
-                        peer-checked:border-blue-600 peer-checked:bg-blue-50 peer-checked:text-blue-600 hover:bg-gray-100">
-                                Kevin
-                            </div>
+                                class="text-center py-1.5 px-2 rounded-md text-[11px] font-bold text-gray-400 transition-all peer-checked:bg-blue-600 peer-checked:text-white hover:bg-gray-200">
+                                Kevin</div>
                         </label>
-
-                        <label class="relative flex-1 cursor-pointer">
+                        <label class="flex-1 cursor-pointer">
                             <input type="checkbox" name="owner-opt" value="Any" class="peer sr-only">
                             <div
-                                class="w-full text-center py-2 px-3 rounded-lg border-2 border-gray-200 text-gray-500 font-bold text-xs transition-all 
-                        peer-checked:border-pink-500 peer-checked:bg-pink-50 peer-checked:text-pink-500 hover:bg-gray-100">
-                                Any
-                            </div>
+                                class="text-center py-1.5 px-2 rounded-md text-[11px] font-bold text-gray-400 transition-all peer-checked:bg-pink-500 peer-checked:text-white hover:bg-gray-200">
+                                Any</div>
                         </label>
-
-                        <label class="relative flex-1 cursor-pointer">
+                        <label class="flex-1 cursor-pointer">
                             <input type="checkbox" name="owner-opt" value="Conjunto" class="peer sr-only">
                             <div
-                                class="w-full text-center py-2 px-3 rounded-lg border-2 border-gray-200 text-gray-500 font-bold text-xs transition-all 
-                        peer-checked:border-orange-500 peer-checked:bg-orange-50 peer-checked:text-orange-500 hover:bg-gray-100">
-                                Conjunto
-                            </div>
+                                class="text-center py-1.5 px-2 rounded-md text-[11px] font-bold text-gray-400 transition-all peer-checked:bg-orange-500 peer-checked:text-white hover:bg-gray-200">
+                                Conj.</div>
                         </label>
                     </div>
                 </div>
+
                 <button type="submit"
-                    class="md:col-span-6 bg-blue-600 hover:bg-blue-700 text-white rounded-xl py-3 font-black text-sm transition-all shadow-lg active:scale-95">
-                    SALVAR TRANSAÇÃO
+                    class="w-full lg:w-12 h-[38px] bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center justify-center shadow-md transition-all active:scale-90">
+                    <span class="lg:hidden font-bold text-xs uppercase">Salvar</span>
+                    <svg class="hidden lg:block w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7">
+                        </path>
+                    </svg>
                 </button>
             </form>
 
