@@ -609,7 +609,7 @@ function atualizarAgioPorPercentual() {
     const novoAgio = valorCarta * percent;
 
     elAgioRes.value = novoAgio.toFixed(2);
-    
+
     // Atualiza o label visual do %
     const label = document.getElementById('label-percent-venda');
     if (label) label.innerText = (percent * 100).toFixed(1) + "%";
@@ -628,7 +628,7 @@ function atualizarComissaoPorPercentual() {
 
     const vendaAgio = parseFloat(elAgio.value) || 0;
     const percentComissao = parseFloat(elPercentCom.value) / 100;
-    
+
     const valorComissao = vendaAgio * percentComissao;
     elValorCom.value = valorComissao.toFixed(2);
 
@@ -643,7 +643,7 @@ function executarCalculosEmCadeia() {
     const vendaAgio = parseFloat(document.getElementById('cons-venda-agio').value) || 0;
     const percentComissao = parseFloat(document.getElementById('cons-percent-comissao').value) / 100;
     const valorComissao = vendaAgio * percentComissao;
-    
+
     document.getElementById('cons-valor-comissao').value = valorComissao.toFixed(2);
 
     // Depois roda a simulação final
@@ -1037,29 +1037,54 @@ document.getElementById('individual-form').addEventListener('submit', async (e) 
     e.preventDefault();
 
     const inputDate = document.getElementById('ind-date').value;
+    const description = document.getElementById('ind-desc').value;
+    const totalValue = parseFloat(document.getElementById('ind-value').value);
+    const category = document.getElementById('ind-category').value;
 
-    const payload = {
-        description: document.getElementById('ind-desc').value,
-        value: document.getElementById('ind-value').value,
-        owner: document.getElementById('ind-owner').value,
-        category: document.getElementById('ind-category').value,
-        // Usamos a data que você escolheu no calendário
-        date: new Date(inputDate + "T12:00:00")
-    };
+    // Get all checked owners
+    const selectedOwners = Array.from(document.querySelectorAll('input[name="owner-opt"]:checked'))
+        .map(cb => cb.value);
 
-    await fetch('/api/individual', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-    });
+    if (selectedOwners.length === 0) {
+        showNotification("Selecione pelo menos uma pessoa/conta.", true);
+        return;
+    }
 
-    showNotification("Gasto adicionado!");
-    e.target.reset();
+    // Calculate individual value (Split)
+    const splitValue = totalValue / selectedOwners.length;
 
-    // Reseta a data para hoje após salvar
-    document.getElementById('ind-date').value = new Date().toISOString().split('T')[0];
+    try {
+        // Create an array of fetch promises to run them in parallel
+        const requests = selectedOwners.map(owner => {
+            const payload = {
+                description: selectedOwners.length > 1 ? `${description} (Split)` : description,
+                value: splitValue,
+                owner: owner,
+                category: category,
+                date: new Date(inputDate + "T12:00:00")
+            };
 
-    loadIndividualData();
+            return fetch('/api/individual', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+        });
+
+        await Promise.all(requests);
+        document.querySelectorAll('input[name="owner-opt"]').forEach(cb => cb.checked = false);
+        showNotification(`Gasto dividido entre ${selectedOwners.length} conta(s)!`);
+        e.target.reset();
+
+        // Reset the date to today and uncheck boxes
+        document.getElementById('ind-date').value = new Date().toISOString().split('T')[0];
+        document.querySelectorAll('input[name="owner-opt"]').forEach(cb => cb.checked = false);
+
+        loadIndividualData();
+    } catch (err) {
+        console.error("Erro ao salvar split:", err);
+        showNotification("Erro ao processar divisão de conta.", true);
+    }
 });
 
 /**

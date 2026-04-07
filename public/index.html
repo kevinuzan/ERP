@@ -104,12 +104,43 @@
                     <option value="Outros">Outros</option>
                 </select>
 
-                <select id="ind-owner" class="border p-2 rounded text-sm">
-                    <option value="Any">Any</option>
-                    <option value="Kevin">Kevin</option>
-                    <option value="Conjunto">Conjunto</option>
-                </select>
-                <button type="submit" class="bg-blue-600 text-white rounded font-bold text-sm">Salvar</button>
+                <div class="col-span-1 md:col-span-6 bg-gray-50 p-3 rounded-xl border border-gray-200 mt-2">
+                    <span class="text-[10px] text-gray-400 uppercase font-black tracking-wider mb-2 block">Dividir conta
+                        com:</span>
+
+                    <div class="flex flex-wrap gap-2">
+                        <label class="relative flex-1 cursor-pointer">
+                            <input type="checkbox" name="owner-opt" value="Kevin" class="peer sr-only">
+                            <div
+                                class="w-full text-center py-2 px-3 rounded-lg border-2 border-gray-200 text-gray-500 font-bold text-xs transition-all 
+                        peer-checked:border-blue-600 peer-checked:bg-blue-50 peer-checked:text-blue-600 hover:bg-gray-100">
+                                Kevin
+                            </div>
+                        </label>
+
+                        <label class="relative flex-1 cursor-pointer">
+                            <input type="checkbox" name="owner-opt" value="Any" class="peer sr-only">
+                            <div
+                                class="w-full text-center py-2 px-3 rounded-lg border-2 border-gray-200 text-gray-500 font-bold text-xs transition-all 
+                        peer-checked:border-pink-500 peer-checked:bg-pink-50 peer-checked:text-pink-500 hover:bg-gray-100">
+                                Any
+                            </div>
+                        </label>
+
+                        <label class="relative flex-1 cursor-pointer">
+                            <input type="checkbox" name="owner-opt" value="Conjunto" class="peer sr-only">
+                            <div
+                                class="w-full text-center py-2 px-3 rounded-lg border-2 border-gray-200 text-gray-500 font-bold text-xs transition-all 
+                        peer-checked:border-orange-500 peer-checked:bg-orange-50 peer-checked:text-orange-500 hover:bg-gray-100">
+                                Conjunto
+                            </div>
+                        </label>
+                    </div>
+                </div>
+                <button type="submit"
+                    class="md:col-span-6 bg-blue-600 hover:bg-blue-700 text-white rounded-xl py-3 font-black text-sm transition-all shadow-lg active:scale-95">
+                    SALVAR TRANSAÇÃO
+                </button>
             </form>
 
             <div id="modal-edit-ind"
@@ -665,13 +696,13 @@
                         </div>
                         <div class="grid grid-cols-2 gap-4">
                             <div>
-                                <label class="block text-[10px] uppercase font-bold text-blue-600">% de Ágio</label>
+                                <label class="block text-[10px] uppercase font-bold text-blue-600">% de Venda</label>
                                 <input type="number" id="cons-percent-venda" value="40" step="0.1"
                                     class="w-full p-2 border-2 border-blue-300 rounded-lg font-bold text-gray-900 bg-white"
                                     oninput="atualizarAgioPorPercentual()">
                             </div>
                             <div>
-                                <label class="block text-[10px] uppercase font-bold text-blue-600">Valor Ágio
+                                <label class="block text-[10px] uppercase font-bold text-blue-600">Valor Venda
                                     (R$)</label>
                                 <input type="number" id="cons-venda-agio" value="22017.04" step="0.01"
                                     class="w-full p-2 border-2 border-blue-300 rounded-lg font-bold text-gray-900 bg-white"
