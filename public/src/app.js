@@ -1065,7 +1065,7 @@ function carregarConsorcioSelecionado() {
 
         // Atualiza os labels visuais (se houver)
         if (document.getElementById('label-percent-venda')) {
-            document.getElementById('label-percent-venda').innerText = "0.0%";
+            document.getElementById('label-percent-venda').innerText = "40.0%";
         }
 
         // Recalcula para mostrar o gráfico zerado/vazio
@@ -1167,50 +1167,66 @@ document.getElementById('individual-form').addEventListener('submit', async (e) 
     const description = document.getElementById('ind-desc').value;
     const totalValue = parseFloat(document.getElementById('ind-value').value);
     const category = document.getElementById('ind-category').value;
+    const installments = parseInt(document.getElementById('ind-installments').value) || 1;
 
-    // Get all checked owners
+    // Pegar donos selecionados (Kevin, Any, Conjunto)
     const selectedOwners = Array.from(document.querySelectorAll('input[name="owner-opt"]:checked'))
         .map(cb => cb.value);
 
     if (selectedOwners.length === 0) {
-        showNotification("Selecione pelo menos uma pessoa/conta.", true);
+        showNotification("Selecione pelo menos um dono.", true);
         return;
     }
 
-    // Calculate individual value (Split)
-    const splitValue = totalValue / selectedOwners.length;
+    // Cálculo do valor por pessoa e por parcela
+    const valuePerPerson = totalValue / selectedOwners.length;
+    const valuePerInstallment = valuePerPerson / installments;
 
     try {
-        // Create an array of fetch promises to run them in parallel
-        const requests = selectedOwners.map(owner => {
-            const payload = {
-                description: selectedOwners.length > 1 ? `${description} (Split)` : description,
-                value: splitValue,
-                owner: owner,
-                category: category,
-                date: new Date(inputDate + "T12:00:00")
-            };
+        const requests = [];
 
-            return fetch('/api/individual', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
+        // Loop para cada dono selecionado
+        selectedOwners.forEach(owner => {
+            // Loop para cada parcela
+            for (let i = 0; i < installments; i++) {
+                const date = new Date(inputDate + "T12:00:00");
+                date.setMonth(date.getMonth() + i); // Soma os meses das parcelas
+
+                const payload = {
+                    description: installments > 1 ? `${description} (${i + 1}/${installments})` : description,
+                    value: valuePerInstallment,
+                    owner: owner,
+                    category: category,
+                    date: date
+                };
+
+                requests.push(
+                    fetch('/api/individual', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    })
+                );
+            }
         });
 
         await Promise.all(requests);
-        document.querySelectorAll('input[name="owner-opt"]').forEach(cb => cb.checked = false);
-        showNotification(`Gasto dividido entre ${selectedOwners.length} conta(s)!`);
+
+        showNotification(installments > 1
+            ? `Compra parcelada em ${installments}x salva com sucesso!`
+            : "Gasto adicionado!");
+
         e.target.reset();
 
-        // Reset the date to today and uncheck boxes
+        // Reseta campos padrões
         document.getElementById('ind-date').value = new Date().toISOString().split('T')[0];
+        document.getElementById('ind-installments').value = 1;
         document.querySelectorAll('input[name="owner-opt"]').forEach(cb => cb.checked = false);
 
         loadIndividualData();
     } catch (err) {
-        console.error("Erro ao salvar split:", err);
-        showNotification("Erro ao processar divisão de conta.", true);
+        console.error("Erro ao salvar:", err);
+        showNotification("Erro ao processar parcelamento.", true);
     }
 });
 
