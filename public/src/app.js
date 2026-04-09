@@ -1021,6 +1021,133 @@ function renderIndividualTable() {
     });
 }
 
+let consorciosSalvos = [];
+
+// Chama isso quando carregar a página ou mudar de aba
+async function loadConsorciosList() {
+    try {
+        const res = await fetch('/api/consorcios');
+        consorciosSalvos = await res.json();
+
+        const select = document.getElementById('select-consorcio-ativo');
+        select.innerHTML = '<option value="">-- Novo Simulador Livre --</option>';
+
+        consorciosSalvos.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c._id;
+            opt.textContent = c.name;
+            select.appendChild(opt);
+        });
+    } catch (e) { console.error("Erro ao listar consórcios", e); }
+}
+
+function carregarConsorcioSelecionado() {
+    const id = document.getElementById('select-consorcio-ativo').value;
+    const btnDelete = document.getElementById('btn-delete-consorcio');
+    const labelBtn = document.getElementById('label-btn-salvar-cons');
+    const inputId = document.getElementById('cons-id-ativo');
+
+    if (!id) {
+        // --- MODO: NOVO SIMULADOR LIVRE ---
+        inputId.value = "";
+        btnDelete.classList.add('hidden');
+        labelBtn.innerText = "Salvar Novo";
+
+        // Limpa todos os inputs para valores padrão/zerados
+        document.getElementById('cons-valor-carta').value = 0; // Valor padrão ou 0
+        document.getElementById('cons-mes-contemplacao').value = 0;
+        document.getElementById('cons-parcela-pre').value = 0;
+        document.getElementById('cons-parcela-pos').value = 0;
+        document.getElementById('cons-lance').value = 0;
+        document.getElementById('cons-venda-agio').value = 0;
+        document.getElementById('cons-percent-comissao').value = 0;
+        document.getElementById('cons-valor-comissao').value = 0;
+
+        // Atualiza os labels visuais (se houver)
+        if (document.getElementById('label-percent-venda')) {
+            document.getElementById('label-percent-venda').innerText = "0.0%";
+        }
+
+        // Recalcula para mostrar o gráfico zerado/vazio
+        if (typeof calcularSimulacaoReal === "function") calcularSimulacaoReal();
+        return;
+    }
+
+    // --- MODO: CARREGAR SALVO ---
+    const c = consorciosSalvos.find(item => item._id === id);
+    if (c) {
+        inputId.value = c._id;
+        document.getElementById('cons-valor-carta').value = c.valorCarta || 0;
+        document.getElementById('cons-mes-contemplacao').value = c.mesContemplacao || 0;
+        document.getElementById('cons-parcela-pre').value = c.parcelaPre || 0;
+        document.getElementById('cons-parcela-pos').value = c.parcelaPos || 0;
+        document.getElementById('cons-lance').value = c.lance || 0;
+        document.getElementById('cons-venda-agio').value = c.vendaAgio || 0;
+        document.getElementById('cons-percent-comissao').value = c.percentComissao || 0;
+        document.getElementById('cons-valor-comissao').value = c.valorComissao || 0;
+
+        btnDelete.classList.remove('hidden');
+        labelBtn.innerText = "Atualizar Dados";
+
+        if (typeof calcularSimulacaoReal === "function") calcularSimulacaoReal();
+    }
+}
+
+async function salvarConsorcio() {
+    const idExistente = document.getElementById('cons-id-ativo').value;
+    let nome = "";
+
+    if (!idExistente) {
+        nome = prompt("Dê um nome para este novo projeto:");
+        if (!nome) return;
+    } else {
+        const atual = consorciosSalvos.find(c => c._id === idExistente);
+        nome = atual.name;
+    }
+
+    const data = {
+        name: nome,
+        valorCarta: parseFloat(document.getElementById('cons-valor-carta').value) || 0,
+        mesContemplacao: parseInt(document.getElementById('cons-mes-contemplacao').value) || 0,
+        parcelaPre: parseFloat(document.getElementById('cons-parcela-pre').value) || 0,
+        parcelaPos: parseFloat(document.getElementById('cons-parcela-pos').value) || 0,
+        lance: parseFloat(document.getElementById('cons-lance').value) || 0,
+        vendaAgio: parseFloat(document.getElementById('cons-venda-agio').value) || 0,
+        percentComissao: parseFloat(document.getElementById('cons-percent-comissao').value) || 0,
+        valorComissao: parseFloat(document.getElementById('cons-valor-comissao').value) || 0
+    };
+
+    if (idExistente) data._id = idExistente;
+
+    const response = await fetch('/api/consorcios', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    });
+
+    if (response.ok) {
+        showNotification(idExistente ? "Consórcio atualizado!" : "Consórcio salvo!");
+        await loadConsorciosList();
+        if (!idExistente) {
+            // Se era novo, seleciona ele automaticamente após salvar
+            const novo = await response.json();
+            document.getElementById('select-consorcio-ativo').value = novo._id;
+            carregarConsorcioSelecionado();
+        }
+    }
+}
+
+async function deletarConsorcioAtivo() {
+    const id = document.getElementById('select-consorcio-ativo').value;
+    if (!id || !confirm("Apagar este consórcio permanentemente?")) return;
+
+    await fetch(`/api/consorcios/${id}`, { method: 'DELETE' });
+    showNotification("Removido com sucesso.");
+    document.getElementById('select-consorcio-ativo').value = "";
+    carregarConsorcioSelecionado();
+    loadConsorciosList();
+}
+
 function changeIndMonth(step) {
     indCurrentDate.setMonth(indCurrentDate.getMonth() + step);
     loadIndividualData();
@@ -1456,6 +1583,7 @@ function toggleFormVisibility() {
 // --- INICIALIZAÇÃO ---
 document.addEventListener('DOMContentLoaded', () => {
     switchTab('main');
+    loadConsorciosList();
     // Garante que a data de exibição começa no dia 1
     currentDisplayDate.setDate(1);
 

@@ -434,24 +434,43 @@ app.delete('/api/individual/:id', async (req, res) => {
     }
 });
 
+// --- ROTAS API CONSÓRCIO ---
 
-
-// ROTA: Salvar configuração do consórcio
-app.post('/api/consorcio/config', async (req, res) => {
+// Salvar ou Atualizar
+app.post('/api/consorcios', async (req, res) => {
     try {
-        const config = req.body;
-        // Atualiza o único documento de configuração ou cria se não existir
-        await consorcioCollection.updateOne({}, { $set: config }, { upsert: true });
-        res.json({ message: "Configuração do consórcio salva!" });
+        const client = new MongoClient(MONGO_URI);
+        const db = client.db(DB_NAME);
+        const col = db.collection('consorcios');
+        const data = req.body;
+        if (data._id) {
+            // Se tem ID, é uma edição
+            const id = data._id;
+            delete data._id; // Remove o ID do corpo para não conflitar no Mongo
+            await col.updateOne({ _id: new ObjectId(id) }, { $set: data });
+            res.json({ _id: id, ...data });
+        } else {
+            // Se não tem ID, é um novo
+            const result = await col.insertOne(data);
+            res.json({ _id: result.insertedId, ...data });
+        }
     } catch (error) {
-        res.status(500).json({ error: "Erro ao salvar dados do consórcio." });
+        res.status(500).json({ error: "Erro ao salvar consórcio" });
     }
 });
 
-// ROTA: Buscar configuração
-app.get('/api/consorcio/config', async (req, res) => {
-    const config = await consorcioCollection.findOne({});
-    res.json(config || {});
+app.get('/api/consorcios', async (req, res) => {
+    const client = new MongoClient(MONGO_URI);
+    const db = client.db(DB_NAME);
+    const lista = await db.collection('consorcios').find().toArray();
+    res.json(lista);
+});
+
+app.delete('/api/consorcios/:id', async (req, res) => {
+    const client = new MongoClient(MONGO_URI);
+    const db = client.db(DB_NAME);
+    await db.collection('consorcios').deleteOne({ _id: new ObjectId(req.params.id) });
+    res.json({ message: "Removido" });
 });
 
 
