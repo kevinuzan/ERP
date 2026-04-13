@@ -1189,15 +1189,19 @@ document.getElementById('individual-form').addEventListener('submit', async (e) 
         selectedOwners.forEach(owner => {
             // Loop para cada parcela
             for (let i = 0; i < installments; i++) {
-                const date = new Date(inputDate + "T12:00:00");
-                date.setMonth(date.getMonth() + i); // Soma os meses das parcelas
-
+                // const date = new Date(inputDate + "T12:00:00");
+                // date.setMonth(date.getMonth() + i); // Soma os meses das parcelas
+                
+                const [year, month, day] = inputDate.split('-').map(Number);
+                const date = new Date(Date.UTC(year, month - 1, day-1));
+                // Adicionamos os meses das parcelas
+                date.setUTCMonth(date.getUTCMonth() + i);
                 const payload = {
                     description: installments > 1 ? `${description} (${i + 1}/${installments})` : description,
                     value: valuePerInstallment,
                     owner: owner,
                     category: category,
-                    date: date
+                    date: date.toISOString()
                 };
 
                 requests.push(
