@@ -970,7 +970,11 @@ function renderIndividualCategoryTable(breakdownList) {
 // Atualize sua função principal de renderização para chamar a nova lógica
 function renderIndividualTable() {
     document.getElementById('ind-date').value = new Date().toISOString().split('T')[0];
-    const filter = document.getElementById('filter-owner').value;
+
+    // Pegando os valores dos dois filtros
+    const filterOwner = document.getElementById('filter-owner').value;
+    const filterCategory = document.getElementById('filter-category').value;
+
     const tbody = document.getElementById('individual-table-body');
     const personCardsContainer = document.getElementById('individual-cards');
 
@@ -992,8 +996,13 @@ function renderIndividualTable() {
         </div>
     `).join('');
 
-    // 3. Filtrar dados para o gráfico e extrato
-    const filtered = filter === 'Todos' ? indDataCache : indDataCache.filter(i => i.owner === filter);
+    // 3. Filtrar dados para o gráfico e extrato (combinando Dono e Categoria)
+    const filtered = indDataCache.filter(item => {
+        const matchOwner = filterOwner === 'Todos' || item.owner === filterOwner;
+        const matchCategory = filterCategory === 'Todas' || (item.category && item.category === filterCategory) || (!item.category && filterCategory === 'Outros');
+
+        return matchOwner && matchCategory;
+    });
 
     // Atualiza Gráfico e Tabela de Categoria Lateral
     renderIndividualPieChart(filtered);
@@ -1191,9 +1200,9 @@ document.getElementById('individual-form').addEventListener('submit', async (e) 
             for (let i = 0; i < installments; i++) {
                 // const date = new Date(inputDate + "T12:00:00");
                 // date.setMonth(date.getMonth() + i); // Soma os meses das parcelas
-                
+
                 const [year, month, day] = inputDate.split('-').map(Number);
-                const date = new Date(Date.UTC(year, month - 1, day-1));
+                const date = new Date(Date.UTC(year, month - 1, day - 1));
                 // Adicionamos os meses das parcelas
                 date.setUTCMonth(date.getUTCMonth() + i);
                 const payload = {

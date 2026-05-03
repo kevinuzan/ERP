@@ -210,6 +210,19 @@
                     <h3 class="text-xl font-bold text-gray-800">Distribuição de Despesas</h3>
 
                     <div class="flex items-center gap-2">
+                        <!-- Novo filtro de categoria -->
+                        <select id="filter-category" onchange="loadIndividualData()"
+                            class="bg-gray-50 border-none text-gray-600 text-sm rounded-lg p-2 outline-none">
+                            <option value="Todas">Todas Categorias</option>
+                            <option value="Lazer">Lazer</option>
+                            <option value="Alimentação">Alimentação</option>
+                            <option value="Transporte">Transporte</option>
+                            <option value="Saúde">Saúde</option>
+                            <option value="Trabalho">Trabalho</option>
+                            <option value="Outros">Outros</option>
+                        </select>
+
+                        <!-- Filtro de dono existente -->
                         <select id="filter-owner" onchange="loadIndividualData()"
                             class="bg-gray-50 border-none text-gray-600 text-sm rounded-lg p-2 outline-none">
                             <option value="Todos">Todos</option>
@@ -217,15 +230,6 @@
                             <option value="Kevin">Kevin</option>
                             <option value="Conjunto">Conjunto</option>
                         </select>
-                        <!-- <button onclick="setOwnerFilter('Conjunto')"
-                            class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-blue-700 transition shadow-md">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z">
-                                </path>
-                            </svg>
-                            Conjunto
-                        </button> -->
                     </div>
                 </div>
 
