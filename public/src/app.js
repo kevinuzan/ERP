@@ -1202,7 +1202,7 @@ document.getElementById('individual-form').addEventListener('submit', async (e) 
                 // date.setMonth(date.getMonth() + i); // Soma os meses das parcelas
 
                 const [year, month, day] = inputDate.split('-').map(Number);
-                const date = new Date(Date.UTC(year, month - 1, day - 1));
+                const date = new Date(Date.UTC(year, month - 1, day));
                 // Adicionamos os meses das parcelas
                 date.setUTCMonth(date.getUTCMonth() + i);
                 const payload = {
