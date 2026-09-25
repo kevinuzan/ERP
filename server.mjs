@@ -586,6 +586,80 @@ app.post('/api/transactions', async (req, res) => {
 });
 
 
+// --- ROTA 3.1: Webhook do MacroDroid (Notificações do Santander) ---
+// Recebe o texto bruto extraído da notificação de compra e grava como transação.
+// Protegida por uma chave simples (evita que qualquer um na internet insira transações falsas).
+const SANTANDER_WEBHOOK_SECRET = process.env.SANTANDER_WEBHOOK_SECRET || "troque-essa-chave";
+
+app.post('/api/santander-webhook', async (req, res) => {
+    if (!transactionsCollection) {
+        return res.status(503).json({ error: "Servidor indisponível: Conexão DB falhou." });
+    }
+
+    // --- Autenticação simples via header ---
+    const chaveRecebida = req.get('x-webhook-secret');
+    if (chaveRecebida !== SANTANDER_WEBHOOK_SECRET) {
+        return res.status(401).json({ error: "Não autorizado." });
+    }
+
+    const { estabelecimento, valor, data, hora, status, cartao_final, texto_original } = req.body;
+
+    if (!valor || !status) {
+        return res.status(400).json({ error: "Campos 'valor' e 'status' são obrigatórios.", body_recebido: req.body });
+    }
+
+    // Normaliza o valor ("17,99" ou "17.99" -> 17.99)
+    const valorNumerico = parseFloat(String(valor).replace(/\./g, '').replace(',', '.'));
+
+    // Normaliza a data (esperado "DD/MM/AA" vindo da notificação); se não vier, usa agora
+    let dataTransacao = new Date();
+    if (data) {
+        const [dia, mes, anoCurto] = data.split('/');
+        const ano = anoCurto.length === 2 ? `20${anoCurto}` : anoCurto;
+        dataTransacao = new Date(Date.UTC(parseInt(ano), parseInt(mes) - 1, parseInt(dia)));
+    }
+
+    const statusNormalizado = (status || '').toLowerCase();
+
+    // Compra negada: nenhum dinheiro se moveu, não vira transação.
+    if (statusNormalizado === 'negada') {
+        return res.status(200).json({ message: "Compra negada, ignorada (nenhum valor movimentado)." });
+    }
+
+    // Compra aprovada -> DESPESA. Compra cancelada (estorno de uma aprovada anterior) -> RECEITA (estorno).
+    const tipo = statusNormalizado === 'cancelada' ? 'RECEITA' : 'DESPESA';
+    const descricaoBase = estabelecimento ? estabelecimento.trim() : 'Compra Santander';
+    const descricao = statusNormalizado === 'cancelada'
+        ? `Estorno - ${descricaoBase}`
+        : descricaoBase;
+
+    const transaction = {
+        description: descricao,
+        value: valorNumerico,
+        date: dataTransacao,
+        type: tipo,
+        category: 'Cartão Santander',
+        isRecurrent: false,
+        origem: 'macrodroid-santander',
+        cartaoFinal: cartao_final || null,
+        horaCompra: hora || null,
+        textoOriginal: texto_original || null,
+    };
+
+    try {
+        const result = await transactionsCollection.insertOne(transaction);
+        res.status(201).json({
+            message: "Transação do Santander registrada com sucesso!",
+            _id: result.insertedId,
+            transacao: transaction,
+        });
+    } catch (error) {
+        console.error("Erro ao inserir transação do Santander:", error);
+        res.status(500).json({ error: "Erro ao salvar transação no DB." });
+    }
+});
+
+
 // --- ROTA 4: Edição de Transação (PUT /api/transactions/:id) ---
 app.put('/api/transactions/:id', async (req, res) => {
     if (!transactionsCollection) {
