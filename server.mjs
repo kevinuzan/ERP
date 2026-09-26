@@ -18,12 +18,61 @@ let individualCollection;
 let disneyCollection;
 let consorcioCollection;
 let chatCollection;
+let appSettingsCollection;
 
 // --- CLAUDE API (chat da aba Individual) ---
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
 const CATEGORIAS_VALIDAS = ['Lazer', 'Alimentação', 'Transporte', 'Saúde', 'Trabalho', 'Outros'];
 const OWNERS_VALIDOS = ['Kevin', 'Any', 'Conjunto'];
+
+// --- FECHAMENTO DA FATURA (cartão fecha dia 25) ---
+const CARD_CLOSING_DAY = 25;
+
+// "Hoje" no fuso de São Paulo (UTC-3, sem horário de verão atualmente).
+// Usamos os getters UTC sobre essa data já deslocada pra ler "dia/mês/ano locais" de forma simples.
+function hojeEmSaoPaulo() {
+    const agora = new Date();
+    return new Date(agora.getTime() - 3 * 60 * 60 * 1000);
+}
+
+function cicloAtualKey(dataSp) {
+    return `${dataSp.getUTCFullYear()}-${String(dataSp.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+async function getEstadoFatura() {
+    let estado = await appSettingsCollection.findOne({ _id: 'billing_cycle' });
+    if (!estado) {
+        estado = { _id: 'billing_cycle', overrideAtivo: false, overrideAno: null, overrideMes: null, ativadoNoCiclo: null };
+        await appSettingsCollection.insertOne(estado);
+    }
+
+    // Se o calendário real já alcançou o mês de destino do override, ele deixa de ser necessário
+    // (novos lançamentos já caem nesse mês naturalmente) — desativa sozinho.
+    const hoje = hojeEmSaoPaulo();
+    if (estado.overrideAtivo && estado.overrideAno === hoje.getUTCFullYear() && estado.overrideMes === hoje.getUTCMonth() + 1) {
+        await appSettingsCollection.updateOne({ _id: 'billing_cycle' }, { $set: { overrideAtivo: false } });
+        estado.overrideAtivo = false;
+    }
+
+    return estado;
+}
+
+// Decide a qual mês/ano um gasto deve ser contado (mesReferencia/anoReferencia),
+// que pode ser diferente do mês/ano real da data da compra durante a janela de
+// fechamento da fatura (dia 25 em diante), se o modo "próximo mês" estiver ativo.
+// Só se aplica a lançamentos datados de HOJE (não mexe em parcelas futuras já datadas).
+async function calcularReferencia(dataCompra) {
+    const estado = await getEstadoFatura();
+    const hoje = hojeEmSaoPaulo();
+    const dataNoMesAtual = dataCompra.getUTCFullYear() === hoje.getUTCFullYear()
+        && dataCompra.getUTCMonth() === hoje.getUTCMonth();
+
+    if (estado.overrideAtivo && dataNoMesAtual) {
+        return { anoReferencia: estado.overrideAno, mesReferencia: estado.overrideMes };
+    }
+    return { anoReferencia: dataCompra.getUTCFullYear(), mesReferencia: dataCompra.getUTCMonth() + 1 };
+}
 // Substitua esta string pela sua URI de conexão do MongoDB
 const MONGO_URI = process.env.MONGO_PUBLIC_URL || "SUA_URI_LOCAL_DE_TESTE";
 
@@ -197,6 +246,7 @@ async function connectDB() {
         // Dentro da função de conexão ao banco:
         consorcioCollection = db.collection("consorcio_config");
         chatCollection = db.collection("chat_messages");
+        appSettingsCollection = db.collection("app_settings");
         console.log(`Conectado ao MongoDB: DB '${DB_NAME}'`);
 
         app.listen(PORT, () => {
@@ -385,6 +435,9 @@ app.get('/api/summary', async (req, res) => {
 app.put('/api/individual/:id', async (req, res) => {
     try {
         const { description, value, owner, date, category } = req.body;
+        const dataCompra = new Date(date);
+        // Edição é uma correção explícita do usuário: usa o mês da própria data escolhida,
+        // sem aplicar o override de "próximo mês" (esse só vale pra lançamentos novos "de agora").
         await individualCollection.updateOne(
             { _id: new ObjectId(req.params.id) },
             {
@@ -392,8 +445,10 @@ app.put('/api/individual/:id', async (req, res) => {
                     description,
                     value: parseFloat(value),
                     owner,
-                    date: new Date(date),
-                    category
+                    date: dataCompra,
+                    category,
+                    anoReferencia: dataCompra.getUTCFullYear(),
+                    mesReferencia: dataCompra.getUTCMonth() + 1,
                 }
             }
         );
@@ -406,14 +461,17 @@ app.put('/api/individual/:id', async (req, res) => {
 app.post('/api/individual', async (req, res) => {
     try {
         const { description, value, owner, date, category } = req.body;
+        const dataCompra = new Date(date);
+        const referencia = await calcularReferencia(dataCompra);
         await individualCollection.insertOne({
             description,
             value: parseFloat(value),
             owner,
-            date: new Date(date), // O Mongo salvará a data exata escolhida
-            category
+            date: dataCompra, // O Mongo salvará a data exata escolhida
+            category,
+            ...referencia,
         });
-        res.status(201).json({ success: true });
+        res.status(201).json({ success: true, ...referencia });
     } catch (error) {
         res.status(500).json({ error: "Erro ao salvar" });
     }
@@ -421,16 +479,88 @@ app.post('/api/individual', async (req, res) => {
 
 app.get('/api/individual/list', async (req, res) => {
     const { month, year } = req.query;
+    const mesReferencia = parseInt(month) + 1; // "month" chega 0-indexado do front-end
+    const anoReferencia = parseInt(year);
     const startDate = new Date(Date.UTC(year, month, 1));
     const endDate = new Date(Date.UTC(year, parseInt(month) + 1, 1));
 
     try {
+        // Prioriza o campo de referência (que respeita o fechamento da fatura).
+        // Registros antigos, gravados antes dessa mudança, não têm esse campo — pra esses,
+        // cai de volta pro mês da própria data da compra.
         const expenses = await individualCollection.find({
-            date: { $gte: startDate, $lt: endDate }
+            $or: [
+                { anoReferencia, mesReferencia },
+                { anoReferencia: { $exists: false }, date: { $gte: startDate, $lt: endDate } },
+            ],
         }).sort({ date: -1 }).toArray();
         res.json(expenses);
     } catch (error) {
         res.status(500).json({ error: "Erro ao buscar" });
+    }
+});
+
+// --- FECHAMENTO DA FATURA: status e ativação do modo "próximo mês" ---
+app.get('/api/billing-status', async (req, res) => {
+    if (!appSettingsCollection) {
+        return res.status(503).json({ error: "Servidor indisponível: Conexão DB falhou." });
+    }
+    try {
+        const estado = await getEstadoFatura();
+        const hoje = hojeEmSaoPaulo();
+        const cicloAtual = cicloAtualKey(hoje);
+        // Mostra o banner todo dia entre o fechamento e a virada do mês, enquanto ninguém tiver
+        // ativado o modo "próximo mês". O "não mostrar novamente" é tratado só no front-end
+        // (por aparelho), então aqui não suprimimos o banner por isso.
+        const showBanner = hoje.getUTCDate() >= CARD_CLOSING_DAY && !estado.overrideAtivo;
+
+        const proximo = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth() + 1, 1));
+
+        res.json({
+            showBanner,
+            cicloAtual,
+            overrideAtivo: estado.overrideAtivo,
+            overrideAno: estado.overrideAno,
+            overrideMes: estado.overrideMes,
+            proximoAno: proximo.getUTCFullYear(),
+            proximoMes: proximo.getUTCMonth() + 1,
+        });
+    } catch (error) {
+        console.error("Erro ao checar status da fatura:", error);
+        res.status(500).json({ error: "Erro ao checar status da fatura." });
+    }
+});
+
+app.post('/api/billing-toggle', async (req, res) => {
+    if (!appSettingsCollection) {
+        return res.status(503).json({ error: "Servidor indisponível: Conexão DB falhou." });
+    }
+    try {
+        const hoje = hojeEmSaoPaulo();
+        const proximo = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth() + 1, 1));
+        const cicloAtual = cicloAtualKey(hoje);
+
+        await appSettingsCollection.updateOne(
+            { _id: 'billing_cycle' },
+            {
+                $set: {
+                    overrideAtivo: true,
+                    overrideAno: proximo.getUTCFullYear(),
+                    overrideMes: proximo.getUTCMonth() + 1,
+                    ativadoNoCiclo: cicloAtual,
+                },
+            },
+            { upsert: true }
+        );
+
+        res.json({
+            success: true,
+            overrideAno: proximo.getUTCFullYear(),
+            overrideMes: proximo.getUTCMonth() + 1,
+        });
+    } catch (error) {
+        console.error("Erro ao ativar modo próximo mês:", error);
+        res.status(500).json({ error: "Erro ao ativar modo próximo mês." });
     }
 });
 
@@ -688,6 +818,7 @@ app.post('/api/santander-webhook', async (req, res) => {
         ? `Estorno - ${dados.estabelecimento}`
         : dados.estabelecimento;
 
+    const referenciaSantander = await calcularReferencia(dataTransacao);
     const expense = {
         description: descricao,
         value: valorFinal,
@@ -698,6 +829,7 @@ app.post('/api/santander-webhook', async (req, res) => {
         cartaoFinal: dados.cartaoFinal,
         horaCompra: dados.hora,
         textoOriginal: textoCompleto,
+        ...referenciaSantander,
     };
 
     try {
@@ -734,6 +866,25 @@ const CHAT_TOOLS = [
                 },
             },
             required: ['description', 'value', 'category'],
+        },
+    },
+    {
+        name: 'registrar_gasto_parcelado',
+        description: 'Registra uma compra PARCELADA em várias vezes, quando a mensagem menciona explicitamente parcelamento. Exemplos: "compra parcelada em 10 vezes parcela 45,90 reais - Notebook", "TV 12x de 150,00", "Celular parcelado em 3x de 200". Cria um lançamento em cada um dos meses seguintes, um por parcela.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                description: { type: 'string', description: 'Descrição do produto/serviço comprado.' },
+                installments: { type: 'integer', description: 'Número de parcelas (ex: 10).' },
+                installmentValue: { type: 'number', description: 'Valor de CADA parcela em reais — não o valor total da compra.' },
+                category: { type: 'string', enum: CATEGORIAS_VALIDAS, description: 'Categoria que melhor descreve o gasto.' },
+                owner: {
+                    type: 'string',
+                    enum: OWNERS_VALIDOS,
+                    description: 'Só inclua este campo se o usuário mencionar EXPLICITAMENTE um desses nomes na mensagem. Se não houver menção explícita, NÃO inclua o campo.',
+                },
+            },
+            required: ['description', 'installments', 'installmentValue', 'category'],
         },
     },
     {
@@ -785,14 +936,33 @@ function intervaloDoPeriodo(periodo) {
     }
 }
 
+// Monta o filtro do Mongo pra "consultar_gastos". Pra mês atual/anterior, usa o mesmo campo de
+// "competência" (mesReferencia/anoReferencia) que a aba Individual usa — assim o chat responde
+// baseado na MESMA visão de mês que aparece na tela, respeitando o fechamento da fatura.
+// Pra períodos que abrangem vários meses (últimos 30 dias, ano, tudo), usa a data real mesmo.
+function filtroPorPeriodo(periodo, start, end) {
+    if (periodo === 'mes_atual' || periodo === 'mes_anterior' || !periodo) {
+        const anoReferencia = start.getUTCFullYear();
+        const mesReferencia = start.getUTCMonth() + 1;
+        return {
+            $or: [
+                { anoReferencia, mesReferencia },
+                { anoReferencia: { $exists: false }, date: { $gte: start, $lt: end } },
+            ],
+        };
+    }
+    return { date: { $gte: start, $lt: end } };
+}
+
 const CHAT_SYSTEM_PROMPT = `Você é o assistente do app financeiro pessoal de um casal (Kevin e Any/Ana), que também lança gastos como "Conjunto" quando é dividido.
 Categorias válidas: ${CATEGORIAS_VALIDAS.join(', ')}.
 Donos válidos: ${OWNERS_VALIDOS.join(', ')}.
 Data de hoje: ${new Date().toISOString().slice(0, 10)}.
 
-Quando a mensagem do usuário descrever uma compra/gasto recém-feito, chame a ferramenta registrar_gasto.
+Quando a mensagem do usuário descrever uma compra/gasto recém-feito À VISTA, chame a ferramenta registrar_gasto.
+Quando a mensagem mencionar EXPLICITAMENTE parcelamento (palavras como "parcelado", "parcela", "vezes", "Nx de", "em N vezes"), chame a ferramenta registrar_gasto_parcelado em vez de registrar_gasto.
 Quando a mensagem for uma pergunta ou pedido de resumo/relatório sobre os gastos, chame a ferramenta consultar_gastos.
-Se a mensagem não for nenhuma das duas coisas (ex: um cumprimento), responda normalmente em texto, de forma breve.`;
+Se a mensagem não for nenhuma dessas coisas (ex: um cumprimento), responda normalmente em texto, de forma breve.`;
 
 app.post('/api/chat/message', async (req, res) => {
     if (!chatCollection || !individualCollection) {
@@ -830,13 +1000,16 @@ app.post('/api/chat/message', async (req, res) => {
             const owner = OWNERS_VALIDOS.includes(toolUse.input.owner) ? toolUse.input.owner : ownerPadrao;
             const categoriaFinal = CATEGORIAS_VALIDAS.includes(category) ? category : 'Outros';
 
+            const dataGasto = new Date();
+            const referenciaChat = await calcularReferencia(dataGasto);
             const gasto = {
                 description,
                 value: Math.abs(parseFloat(value)),
                 owner,
                 category: categoriaFinal,
-                date: new Date(),
+                date: dataGasto,
                 origem: 'chat-claude',
+                ...referenciaChat,
             };
             const result = await individualCollection.insertOne(gasto);
 
@@ -844,13 +1017,43 @@ app.post('/api/chat/message', async (req, res) => {
             detalhes = { _id: result.insertedId, ...gasto };
             reply = `✅ Gasto registrado: *${description}* — R$ ${gasto.value.toFixed(2).replace('.', ',')} (${categoriaFinal}, ${owner})`;
 
+        } else if (toolUse && toolUse.name === 'registrar_gasto_parcelado') {
+            const { description, category } = toolUse.input;
+            const installments = Math.max(1, parseInt(toolUse.input.installments) || 1);
+            const installmentValue = Math.abs(parseFloat(toolUse.input.installmentValue));
+            const owner = OWNERS_VALIDOS.includes(toolUse.input.owner) ? toolUse.input.owner : ownerPadrao;
+            const categoriaFinal = CATEGORIAS_VALIDAS.includes(category) ? category : 'Outros';
+
+            const agora = new Date();
+            const gastosParcelados = [];
+            for (let i = 0; i < installments; i++) {
+                const dataParcela = new Date(agora.getTime());
+                dataParcela.setUTCMonth(dataParcela.getUTCMonth() + i);
+                const referenciaParcela = await calcularReferencia(dataParcela);
+                gastosParcelados.push({
+                    description: installments > 1 ? `${description} (${i + 1}/${installments})` : description,
+                    value: installmentValue,
+                    owner,
+                    category: categoriaFinal,
+                    date: dataParcela,
+                    origem: 'chat-claude',
+                    ...referenciaParcela,
+                });
+            }
+            const resultParcelado = await individualCollection.insertMany(gastosParcelados);
+
+            acao = 'gasto_parcelado';
+            detalhes = { insertedIds: resultParcelado.insertedIds, gastos: gastosParcelados };
+            const totalParcelado = (installmentValue * installments).toFixed(2).replace('.', ',');
+            reply = `✅ Compra parcelada registrada: *${description}* em ${installments}x de R$ ${installmentValue.toFixed(2).replace('.', ',')} (total R$ ${totalParcelado}, ${categoriaFinal}, ${owner}) — um lançamento em cada mês a partir de agora.`;
+
         } else if (toolUse && toolUse.name === 'consultar_gastos') {
             const periodo = toolUse.input.periodo || 'mes_atual';
             const { start, end } = intervaloDoPeriodo(periodo);
 
-            const gastos = await individualCollection.find({
-                date: { $gte: start, $lt: end },
-            }).sort({ date: -1 }).toArray();
+            const gastos = await individualCollection.find(
+                filtroPorPeriodo(periodo, start, end)
+            ).sort({ date: -1 }).toArray();
 
             const resumoPorCategoria = {};
             let total = 0;

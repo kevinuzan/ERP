@@ -819,6 +819,9 @@ function switchTab(tab) {
         if (typeof initChat === 'function') {
             initChat();
         }
+        if (typeof checarStatusFatura === 'function') {
+            checarStatusFatura();
+        }
     } else if (tab === 'disney') {
         // Exibir conteúdo
         mainTab.classList.add('hidden');
@@ -1245,6 +1248,72 @@ document.getElementById('individual-form').addEventListener('submit', async (e) 
         showNotification("Erro ao processar parcelamento.", true);
     }
 });
+
+/* ==========================================================
+   FECHAMENTO DA FATURA (cartão fecha dia 25)
+   ========================================================== */
+const MESES_NOMES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+    'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+
+const BILLING_DISMISSED_KEY = 'billingBannerDismissedCiclo';
+let ultimoCicloFatura = null; // guardado pra "Não mostrar novamente" saber qual ciclo marcar
+
+async function checarStatusFatura() {
+    try {
+        const response = await fetch('/api/billing-status');
+        const status = await response.json();
+        ultimoCicloFatura = status.cicloAtual;
+
+        const banner = document.getElementById('billing-banner');
+        const indicator = document.getElementById('billing-indicator');
+
+        // "Não mostrar novamente" é por aparelho e vale só pro ciclo atual (mês em que a fatura fechou).
+        // No próximo ciclo (mês seguinte), o banner volta a aparecer normalmente.
+        const dismissedCiclo = localStorage.getItem(BILLING_DISMISSED_KEY);
+        const foiDispensadoNesseCiclo = dismissedCiclo === status.cicloAtual;
+
+        if (status.showBanner && !foiDispensadoNesseCiclo) {
+            document.getElementById('billing-banner-text').textContent =
+                `A fatura fecha hoje! A partir de agora, os gastos podem valer para ${MESES_NOMES[status.proximoMes - 1]}.`;
+            banner.classList.remove('hidden');
+        } else {
+            banner.classList.add('hidden');
+        }
+
+        if (status.overrideAtivo) {
+            document.getElementById('billing-indicator-mes').textContent =
+                `${MESES_NOMES[status.overrideMes - 1]}/${status.overrideAno}`;
+            indicator.classList.remove('hidden');
+        } else {
+            indicator.classList.add('hidden');
+        }
+    } catch (err) {
+        console.error('Erro ao checar status da fatura:', err);
+    }
+}
+
+function dispensarBannerFatura() {
+    if (ultimoCicloFatura) {
+        localStorage.setItem(BILLING_DISMISSED_KEY, ultimoCicloFatura);
+    }
+    document.getElementById('billing-banner').classList.add('hidden');
+}
+
+async function ativarProximoMes() {
+    try {
+        const response = await fetch('/api/billing-toggle', { method: 'POST' });
+        const data = await response.json();
+        if (!response.ok) {
+            showNotification(data.error || 'Erro ao ativar modo próximo mês.', true);
+            return;
+        }
+        showNotification(`A partir de agora, novos gastos valem para ${MESES_NOMES[data.overrideMes - 1]}/${data.overrideAno}!`);
+        checarStatusFatura();
+    } catch (err) {
+        console.error('Erro ao ativar modo próximo mês:', err);
+        showNotification('Erro de conexão ao ativar modo próximo mês.', true);
+    }
+}
 
 /* ==========================================================
    CHAT DE GASTOS (Claude API)
