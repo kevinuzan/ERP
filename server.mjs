@@ -5,6 +5,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import bodyParser from 'body-parser';
+import Anthropic from '@anthropic-ai/sdk'; // yarn add @anthropic-ai/sdk
 
 // --- CONFIGURAÇÕES BÁSICAS ---
 const app = express();
@@ -16,6 +17,13 @@ const __dirname = path.dirname(__filename);
 let individualCollection;
 let disneyCollection;
 let consorcioCollection;
+let chatCollection;
+
+// --- CLAUDE API (chat da aba Individual) ---
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
+const CATEGORIAS_VALIDAS = ['Lazer', 'Alimentação', 'Transporte', 'Saúde', 'Trabalho', 'Outros'];
+const OWNERS_VALIDOS = ['Kevin', 'Any', 'Conjunto'];
 // Substitua esta string pela sua URI de conexão do MongoDB
 const MONGO_URI = process.env.MONGO_PUBLIC_URL || "SUA_URI_LOCAL_DE_TESTE";
 
@@ -188,6 +196,7 @@ async function connectDB() {
         disneyCollection = db.collection("disney_expenses");
         // Dentro da função de conexão ao banco:
         consorcioCollection = db.collection("consorcio_config");
+        chatCollection = db.collection("chat_messages");
         console.log(`Conectado ao MongoDB: DB '${DB_NAME}'`);
 
         app.listen(PORT, () => {
@@ -701,6 +710,193 @@ app.post('/api/santander-webhook', async (req, res) => {
     } catch (error) {
         console.error("Erro ao inserir gasto do Santander:", error);
         res.status(500).json({ error: "Erro ao salvar gasto no DB." });
+    }
+});
+
+
+// --- CHAT DA ABA INDIVIDUAL (Claude API) ---
+// Duas ferramentas: "registrar_gasto" (quando a mensagem descreve uma compra) e
+// "consultar_gastos" (quando é uma pergunta sobre os gastos já lançados).
+const CHAT_TOOLS = [
+    {
+        name: 'registrar_gasto',
+        description: 'Registra um novo gasto quando a mensagem do usuário descreve uma compra/despesa que acabou de acontecer. Exemplos: "Monster 12,99", "Uber pro trabalho 23,40", "Almoço Stone 54,50 conjunto".',
+        input_schema: {
+            type: 'object',
+            properties: {
+                description: { type: 'string', description: 'Descrição curta do gasto (produto, serviço ou estabelecimento).' },
+                value: { type: 'number', description: 'Valor do gasto em reais, sempre um número positivo (ex: 12.99).' },
+                category: { type: 'string', enum: CATEGORIAS_VALIDAS, description: 'Categoria que melhor descreve o gasto.' },
+                owner: {
+                    type: 'string',
+                    enum: OWNERS_VALIDOS,
+                    description: 'Só inclua este campo se o usuário mencionar EXPLICITAMENTE um desses nomes na mensagem (ex: "conjunto", "Kevin", "Any"). Se não houver menção explícita, NÃO inclua o campo.',
+                },
+            },
+            required: ['description', 'value', 'category'],
+        },
+    },
+    {
+        name: 'consultar_gastos',
+        description: 'Usado quando a mensagem é uma pergunta ou pedido de relatório sobre os gastos já registrados. Exemplos: "no que eu mais gastei esse mês", "quanto gastei em Alimentação", "resumo do mês passado".',
+        input_schema: {
+            type: 'object',
+            properties: {
+                periodo: {
+                    type: 'string',
+                    enum: ['mes_atual', 'mes_anterior', 'ultimos_30_dias', 'ano_atual', 'tudo'],
+                    description: 'Período a que a pergunta se refere. Use "mes_atual" como padrão se não for especificado.',
+                },
+            },
+            required: [],
+        },
+    },
+];
+
+function intervaloDoPeriodo(periodo) {
+    const agora = new Date();
+    const anoAtual = agora.getUTCFullYear();
+    const mesAtual = agora.getUTCMonth(); // 0-indexado
+
+    switch (periodo) {
+        case 'mes_anterior': {
+            const start = new Date(Date.UTC(anoAtual, mesAtual - 1, 1));
+            const end = new Date(Date.UTC(anoAtual, mesAtual, 1));
+            return { start, end };
+        }
+        case 'ultimos_30_dias': {
+            const end = new Date(Date.UTC(anoAtual, mesAtual, agora.getUTCDate() + 1));
+            const start = new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
+            return { start, end };
+        }
+        case 'ano_atual': {
+            const start = new Date(Date.UTC(anoAtual, 0, 1));
+            const end = new Date(Date.UTC(anoAtual + 1, 0, 1));
+            return { start, end };
+        }
+        case 'tudo':
+            return { start: new Date(Date.UTC(2000, 0, 1)), end: new Date(Date.UTC(anoAtual + 1, 0, 1)) };
+        case 'mes_atual':
+        default: {
+            const start = new Date(Date.UTC(anoAtual, mesAtual, 1));
+            const end = new Date(Date.UTC(anoAtual, mesAtual + 1, 1));
+            return { start, end };
+        }
+    }
+}
+
+const CHAT_SYSTEM_PROMPT = `Você é o assistente do app financeiro pessoal de um casal (Kevin e Any/Ana), que também lança gastos como "Conjunto" quando é dividido.
+Categorias válidas: ${CATEGORIAS_VALIDAS.join(', ')}.
+Donos válidos: ${OWNERS_VALIDOS.join(', ')}.
+Data de hoje: ${new Date().toISOString().slice(0, 10)}.
+
+Quando a mensagem do usuário descrever uma compra/gasto recém-feito, chame a ferramenta registrar_gasto.
+Quando a mensagem for uma pergunta ou pedido de resumo/relatório sobre os gastos, chame a ferramenta consultar_gastos.
+Se a mensagem não for nenhuma das duas coisas (ex: um cumprimento), responda normalmente em texto, de forma breve.`;
+
+app.post('/api/chat/message', async (req, res) => {
+    if (!chatCollection || !individualCollection) {
+        return res.status(503).json({ error: "Servidor indisponível: Conexão DB falhou." });
+    }
+    if (!process.env.ANTHROPIC_API_KEY) {
+        return res.status(500).json({ error: "ANTHROPIC_API_KEY não configurada no servidor." });
+    }
+
+    const { message, defaultOwner } = req.body;
+    if (!message || !message.trim()) {
+        return res.status(400).json({ error: "Campo 'message' é obrigatório." });
+    }
+    const ownerPadrao = OWNERS_VALIDOS.includes(defaultOwner) ? defaultOwner : 'Conjunto';
+
+    try {
+        await chatCollection.insertOne({ role: 'user', content: message, owner: ownerPadrao, date: new Date() });
+
+        const primeiraResposta = await anthropic.messages.create({
+            model: CLAUDE_MODEL,
+            max_tokens: 1024,
+            system: CHAT_SYSTEM_PROMPT,
+            tools: CHAT_TOOLS,
+            messages: [{ role: 'user', content: message }],
+        });
+
+        const toolUse = primeiraResposta.content.find(bloco => bloco.type === 'tool_use');
+
+        let reply;
+        let acao = 'chat';
+        let detalhes = null;
+
+        if (toolUse && toolUse.name === 'registrar_gasto') {
+            const { description, value, category } = toolUse.input;
+            const owner = OWNERS_VALIDOS.includes(toolUse.input.owner) ? toolUse.input.owner : ownerPadrao;
+            const categoriaFinal = CATEGORIAS_VALIDAS.includes(category) ? category : 'Outros';
+
+            const gasto = {
+                description,
+                value: Math.abs(parseFloat(value)),
+                owner,
+                category: categoriaFinal,
+                date: new Date(),
+                origem: 'chat-claude',
+            };
+            const result = await individualCollection.insertOne(gasto);
+
+            acao = 'gasto';
+            detalhes = { _id: result.insertedId, ...gasto };
+            reply = `✅ Gasto registrado: *${description}* — R$ ${gasto.value.toFixed(2).replace('.', ',')} (${categoriaFinal}, ${owner})`;
+
+        } else if (toolUse && toolUse.name === 'consultar_gastos') {
+            const periodo = toolUse.input.periodo || 'mes_atual';
+            const { start, end } = intervaloDoPeriodo(periodo);
+
+            const gastos = await individualCollection.find({
+                date: { $gte: start, $lt: end },
+            }).sort({ date: -1 }).toArray();
+
+            const resumoPorCategoria = {};
+            let total = 0;
+            for (const g of gastos) {
+                resumoPorCategoria[g.category] = (resumoPorCategoria[g.category] || 0) + g.value;
+                total += g.value;
+            }
+
+            const segundaResposta = await anthropic.messages.create({
+                model: CLAUDE_MODEL,
+                max_tokens: 512,
+                system: `Você é um assistente financeiro. Responda a pergunta do usuário de forma direta, curta (poucas frases) e em português, com base EXCLUSIVAMENTE nos dados abaixo. Se não houver dados suficientes, diga isso.
+Dados do período "${periodo}" (${gastos.length} lançamentos, total R$ ${total.toFixed(2)}):
+Resumo por categoria: ${JSON.stringify(resumoPorCategoria)}
+Lançamentos individuais: ${JSON.stringify(gastos.map(g => ({ descricao: g.description, valor: g.value, categoria: g.category, dono: g.owner, data: g.date })))}`,
+                messages: [{ role: 'user', content: message }],
+            });
+
+            reply = segundaResposta.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
+            acao = 'consulta';
+            detalhes = { periodo, total, resumoPorCategoria, quantidade: gastos.length };
+
+        } else {
+            reply = primeiraResposta.content.filter(b => b.type === 'text').map(b => b.text).join('\n')
+                || "Não entendi bem — pode reformular? Você pode me contar um gasto (ex: \"Monster 12,99\") ou perguntar algo sobre seus gastos.";
+        }
+
+        await chatCollection.insertOne({ role: 'assistant', content: reply, action: acao, date: new Date() });
+
+        res.json({ reply, action: acao, detalhes });
+    } catch (error) {
+        console.error("Erro no chat:", error);
+        res.status(500).json({ error: "Erro ao processar mensagem no chat.", detalhe: error.message });
+    }
+});
+
+app.get('/api/chat/history', async (req, res) => {
+    if (!chatCollection) {
+        return res.status(503).json({ error: "Servidor indisponível: Conexão DB falhou." });
+    }
+    const limit = parseInt(req.query.limit) || 50;
+    try {
+        const mensagens = await chatCollection.find({}).sort({ date: -1 }).limit(limit).toArray();
+        res.json(mensagens.reverse());
+    } catch (error) {
+        res.status(500).json({ error: "Erro ao buscar histórico do chat." });
     }
 });
 

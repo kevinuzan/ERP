@@ -816,6 +816,9 @@ function switchTab(tab) {
         if (typeof loadIndividualData === 'function') {
             loadIndividualData();
         }
+        if (typeof initChat === 'function') {
+            initChat();
+        }
     } else if (tab === 'disney') {
         // Exibir conteúdo
         mainTab.classList.add('hidden');
@@ -1240,6 +1243,117 @@ document.getElementById('individual-form').addEventListener('submit', async (e) 
     } catch (err) {
         console.error("Erro ao salvar:", err);
         showNotification("Erro ao processar parcelamento.", true);
+    }
+});
+
+/* ==========================================================
+   CHAT DE GASTOS (Claude API)
+   ========================================================== */
+const CHAT_OWNER_KEY = 'chatOwner';
+let chatHistoryCarregado = false;
+
+function initChat() {
+    const owner = localStorage.getItem(CHAT_OWNER_KEY);
+    const picker = document.getElementById('chat-picker-owner');
+    const container = document.getElementById('chat-container');
+    const badge = document.getElementById('chat-owner-badge');
+
+    if (!owner) {
+        picker.classList.remove('hidden');
+        container.classList.add('hidden');
+        return;
+    }
+
+    picker.classList.add('hidden');
+    container.classList.remove('hidden');
+    badge.textContent = owner;
+
+    if (!chatHistoryCarregado) {
+        chatHistoryCarregado = true;
+        carregarHistoricoChat();
+    }
+}
+
+function definirChatOwner(owner) {
+    localStorage.setItem(CHAT_OWNER_KEY, owner);
+    initChat();
+}
+
+function trocarChatOwner() {
+    const atual = localStorage.getItem(CHAT_OWNER_KEY);
+    const novo = atual === 'Kevin' ? 'Any' : 'Kevin';
+    if (confirm(`Trocar de "${atual}" para "${novo}" neste aparelho?`)) {
+        definirChatOwner(novo);
+    }
+}
+
+function renderChatMessage(role, content) {
+    const wrapper = document.getElementById('chat-messages');
+    const bubble = document.createElement('div');
+
+    if (role === 'user') {
+        bubble.className = 'self-end max-w-[80%] bg-blue-600 text-white text-sm px-3 py-2 rounded-2xl rounded-br-sm';
+    } else {
+        bubble.className = 'self-start max-w-[80%] bg-white border border-gray-200 text-gray-800 text-sm px-3 py-2 rounded-2xl rounded-bl-sm shadow-sm whitespace-pre-wrap';
+    }
+    bubble.textContent = content;
+    wrapper.appendChild(bubble);
+    wrapper.scrollTop = wrapper.scrollHeight;
+    return bubble;
+}
+
+async function carregarHistoricoChat() {
+    try {
+        const response = await fetch('/api/chat/history?limit=30');
+        const mensagens = await response.json();
+        const wrapper = document.getElementById('chat-messages');
+        wrapper.innerHTML = '';
+        if (mensagens.length === 0) {
+            renderChatMessage('assistant', 'Oi! Me conta um gasto (ex: "Monster 12,99") ou pergunta algo tipo "no que eu mais gastei esse mês".');
+            return;
+        }
+        mensagens.forEach(m => renderChatMessage(m.role, m.content));
+    } catch (err) {
+        console.error('Erro ao carregar histórico do chat:', err);
+    }
+}
+
+document.getElementById('chat-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const input = document.getElementById('chat-input');
+    const sendBtn = document.getElementById('chat-send-btn');
+    const message = input.value.trim();
+    if (!message) return;
+
+    renderChatMessage('user', message);
+    input.value = '';
+    sendBtn.disabled = true;
+
+    const bubbleCarregando = renderChatMessage('assistant', '...');
+
+    try {
+        const owner = localStorage.getItem(CHAT_OWNER_KEY) || 'Conjunto';
+        const response = await fetch('/api/chat/message', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message, defaultOwner: owner }),
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+            bubbleCarregando.textContent = data.error || 'Erro ao processar mensagem.';
+        } else {
+            bubbleCarregando.textContent = data.reply;
+            if (data.action === 'gasto') {
+                loadIndividualData();
+            }
+        }
+    } catch (err) {
+        console.error('Erro no chat:', err);
+        bubbleCarregando.textContent = 'Erro de conexão com o servidor.';
+    } finally {
+        sendBtn.disabled = false;
+        input.focus();
     }
 });
 
