@@ -597,7 +597,8 @@ const SANTANDER_WEBHOOK_SECRET = process.env.SANTANDER_WEBHOOK_SECRET || "troque
 function parseNotificacaoSantander(texto) {
     if (!texto) return null;
 
-    const regex = /cart[ãa]o final\s*(\d{3,4}).*?R\$\s*([\d.,]+?)\s*,.*?em\s*(\d{2}\/\d{2}\/\d{2,4}).*?[àa]s\s*(\d{2}:\d{2}).*?em\s*(.+?),\s*(aprovada|cancelada|negada)/is;
+    // Valor no formato brasileiro: "17,99" ou "1.234,50" (sempre com 2 casas decimais após a vírgula)
+    const regex = /cart[ãa]o final\s*(\d{3,4}).*?R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2}).*?em\s*(\d{2}\/\d{2}\/\d{2,4}).*?[àa]s\s*(\d{2}:\d{2}).*?em\s*(.+?),\s*(aprovada|cancelada|negada)/is;
     const match = texto.match(regex);
     if (!match) return null;
 
