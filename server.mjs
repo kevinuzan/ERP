@@ -591,6 +591,27 @@ app.post('/api/transactions', async (req, res) => {
 // Protegida por uma chave simples (evita que qualquer um na internet insira transações falsas).
 const SANTANDER_WEBHOOK_SECRET = process.env.SANTANDER_WEBHOOK_SECRET || "troque-essa-chave";
 
+// Extrai os campos da notificação de compra do Santander a partir do texto bruto.
+// Exemplo de texto esperado:
+// "Compra no cartão final 7324, de R$ 17,99, em 25/09/26, às 19:23, em ALTAAPROVACAO, aprovada."
+function parseNotificacaoSantander(texto) {
+    if (!texto) return null;
+
+    const regex = /cart[ãa]o final\s*(\d{3,4}).*?R\$\s*([\d.,]+?)\s*,.*?em\s*(\d{2}\/\d{2}\/\d{2,4}).*?[àa]s\s*(\d{2}:\d{2}).*?em\s*(.+?),\s*(aprovada|cancelada|negada)/is;
+    const match = texto.match(regex);
+    if (!match) return null;
+
+    const [, cartaoFinal, valorStr, dataStr, hora, estabelecimento, status] = match;
+    return {
+        cartaoFinal,
+        valor: valorStr,
+        data: dataStr,
+        hora,
+        estabelecimento: estabelecimento.trim(),
+        status: status.toLowerCase(),
+    };
+}
+
 app.post('/api/santander-webhook', async (req, res) => {
     if (!transactionsCollection) {
         return res.status(503).json({ error: "Servidor indisponível: Conexão DB falhou." });
@@ -602,36 +623,44 @@ app.post('/api/santander-webhook', async (req, res) => {
         return res.status(401).json({ error: "Não autorizado." });
     }
 
-    const { estabelecimento, valor, data, hora, status, cartao_final, texto_original } = req.body;
+    // O MacroDroid manda o texto cru da notificação (título + corpo) — o parsing é feito aqui.
+    const { titulo, texto } = req.body;
+    const textoCompleto = [titulo, texto].filter(Boolean).join(' ');
 
-    if (!valor || !status) {
-        return res.status(400).json({ error: "Campos 'valor' e 'status' são obrigatórios.", body_recebido: req.body });
+    if (!textoCompleto) {
+        return res.status(400).json({ error: "Campo 'texto' (ou 'titulo') é obrigatório.", body_recebido: req.body });
     }
 
-    // Normaliza o valor ("17,99" ou "17.99" -> 17.99)
-    const valorNumerico = parseFloat(String(valor).replace(/\./g, '').replace(',', '.'));
+    const dados = parseNotificacaoSantander(textoCompleto);
 
-    // Normaliza a data (esperado "DD/MM/AA" vindo da notificação); se não vier, usa agora
-    let dataTransacao = new Date();
-    if (data) {
-        const [dia, mes, anoCurto] = data.split('/');
-        const ano = anoCurto.length === 2 ? `20${anoCurto}` : anoCurto;
-        dataTransacao = new Date(Date.UTC(parseInt(ano), parseInt(mes) - 1, parseInt(dia)));
+    if (!dados) {
+        // Não conseguiu reconhecer o formato (pode ser outro tipo de notificação, tipo PIX).
+        // Retorna 200 pra não gerar retentativas no MacroDroid, mas registra o que veio pra análise.
+        console.warn("Notificação Santander não reconhecida:", textoCompleto);
+        return res.status(200).json({
+            message: "Notificação recebida, mas não reconhecida como compra no cartão. Ignorada.",
+            texto_recebido: textoCompleto,
+        });
     }
 
-    const statusNormalizado = (status || '').toLowerCase();
+    // Normaliza o valor ("17,99" -> 17.99)
+    const valorNumerico = parseFloat(dados.valor.replace(/\./g, '').replace(',', '.'));
+
+    // Normaliza a data "DD/MM/AA" ou "DD/MM/AAAA"
+    const [dia, mes, anoBruto] = dados.data.split('/');
+    const ano = anoBruto.length === 2 ? `20${anoBruto}` : anoBruto;
+    const dataTransacao = new Date(Date.UTC(parseInt(ano), parseInt(mes) - 1, parseInt(dia)));
 
     // Compra negada: nenhum dinheiro se moveu, não vira transação.
-    if (statusNormalizado === 'negada') {
+    if (dados.status === 'negada') {
         return res.status(200).json({ message: "Compra negada, ignorada (nenhum valor movimentado)." });
     }
 
     // Compra aprovada -> DESPESA. Compra cancelada (estorno de uma aprovada anterior) -> RECEITA (estorno).
-    const tipo = statusNormalizado === 'cancelada' ? 'RECEITA' : 'DESPESA';
-    const descricaoBase = estabelecimento ? estabelecimento.trim() : 'Compra Santander';
-    const descricao = statusNormalizado === 'cancelada'
-        ? `Estorno - ${descricaoBase}`
-        : descricaoBase;
+    const tipo = dados.status === 'cancelada' ? 'RECEITA' : 'DESPESA';
+    const descricao = dados.status === 'cancelada'
+        ? `Estorno - ${dados.estabelecimento}`
+        : dados.estabelecimento;
 
     const transaction = {
         description: descricao,
@@ -641,9 +670,9 @@ app.post('/api/santander-webhook', async (req, res) => {
         category: 'Cartão Santander',
         isRecurrent: false,
         origem: 'macrodroid-santander',
-        cartaoFinal: cartao_final || null,
-        horaCompra: hora || null,
-        textoOriginal: texto_original || null,
+        cartaoFinal: dados.cartaoFinal,
+        horaCompra: dados.hora,
+        textoOriginal: textoCompleto,
     };
 
     try {
