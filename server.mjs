@@ -628,7 +628,7 @@ function parseNotificacaoSantander(texto) {
 }
 
 app.post('/api/santander-webhook', async (req, res) => {
-    if (!transactionsCollection) {
+    if (!individualCollection) {
         return res.status(503).json({ error: "Servidor indisponível: Conexão DB falhou." });
     }
 
@@ -671,19 +671,20 @@ app.post('/api/santander-webhook', async (req, res) => {
         return res.status(200).json({ message: "Compra negada, ignorada (nenhum valor movimentado)." });
     }
 
-    // Compra aprovada -> DESPESA. Compra cancelada (estorno de uma aprovada anterior) -> RECEITA (estorno).
-    const tipo = dados.status === 'cancelada' ? 'RECEITA' : 'DESPESA';
+    // A aba "Individual" não tem campo de tipo (RECEITA/DESPESA) — tudo é lançado como "value".
+    // Compra aprovada -> valor positivo (despesa). Compra cancelada (estorno de uma aprovada
+    // anterior) -> valor NEGATIVO, pra abater da soma do mês sem precisar achar e apagar o lançamento antigo.
+    const valorFinal = dados.status === 'cancelada' ? -valorNumerico : valorNumerico;
     const descricao = dados.status === 'cancelada'
         ? `Estorno - ${dados.estabelecimento}`
         : dados.estabelecimento;
 
-    const transaction = {
+    const expense = {
         description: descricao,
-        value: valorNumerico,
+        value: valorFinal,
+        owner: 'Conjunto',
+        category: 'Outros',
         date: dataTransacao,
-        type: tipo,
-        category: 'Cartão Santander',
-        isRecurrent: false,
         origem: 'macrodroid-santander',
         cartaoFinal: dados.cartaoFinal,
         horaCompra: dados.hora,
@@ -691,15 +692,15 @@ app.post('/api/santander-webhook', async (req, res) => {
     };
 
     try {
-        const result = await transactionsCollection.insertOne(transaction);
+        const result = await individualCollection.insertOne(expense);
         res.status(201).json({
-            message: "Transação do Santander registrada com sucesso!",
+            message: "Gasto do Santander registrado na aba Individual com sucesso!",
             _id: result.insertedId,
-            transacao: transaction,
+            gasto: expense,
         });
     } catch (error) {
-        console.error("Erro ao inserir transação do Santander:", error);
-        res.status(500).json({ error: "Erro ao salvar transação no DB." });
+        console.error("Erro ao inserir gasto do Santander:", error);
+        res.status(500).json({ error: "Erro ao salvar gasto no DB." });
     }
 });
 
