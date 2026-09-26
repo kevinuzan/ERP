@@ -592,17 +592,31 @@ app.post('/api/transactions', async (req, res) => {
 const SANTANDER_WEBHOOK_SECRET = process.env.SANTANDER_WEBHOOK_SECRET || "troque-essa-chave";
 
 // Extrai os campos da notificação de compra do Santander a partir do texto bruto.
-// Exemplo de texto esperado:
+// Cobre pelo menos dois formatos conhecidos:
 // "Compra no cartão final 7324, de R$ 17,99, em 25/09/26, às 19:23, em ALTAAPROVACAO, aprovada."
+// "Compra internacional aprovada no cartão final 9202, de R$ 30,00, em 25/09/26, às 21:51, em BOARDGAMEARENA."
+// (no 2º formato o status vem no meio da frase, não no final)
 function parseNotificacaoSantander(texto) {
     if (!texto) return null;
 
     // Valor no formato brasileiro: "17,99" ou "1.234,50" (sempre com 2 casas decimais após a vírgula)
-    const regex = /cart[ãa]o final\s*(\d{3,4}).*?R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2}).*?em\s*(\d{2}\/\d{2}\/\d{2,4}).*?[àa]s\s*(\d{2}:\d{2}).*?em\s*(.+?),\s*(aprovada|cancelada|negada)/is;
+    // O status no final (", aprovada.") é opcional, porque em alguns formatos ele aparece
+    // antes de "no cartão final" em vez de no fim da frase.
+    const regex = /cart[ãa]o final\s*(\d{3,4}).*?R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2}).*?em\s*(\d{2}\/\d{2}\/\d{2,4}).*?[àa]s\s*(\d{2}:\d{2}).*?em\s+(.+?)(?:,\s*(aprovada|cancelada|negada))?\s*\.?\s*$/is;
     const match = texto.match(regex);
     if (!match) return null;
 
-    const [, cartaoFinal, valorStr, dataStr, hora, estabelecimento, status] = match;
+    const [, cartaoFinal, valorStr, dataStr, hora, estabelecimento, statusFinal] = match;
+
+    // Se o status não veio no final, procura em qualquer lugar do texto
+    // (cobre "Compra internacional aprovada no cartão...").
+    let status = statusFinal;
+    if (!status) {
+        const statusMatch = texto.match(/\b(aprovada|cancelada|negada)\b/i);
+        status = statusMatch ? statusMatch[1] : null;
+    }
+    if (!status) return null;
+
     return {
         cartaoFinal,
         valor: valorStr,
