@@ -471,7 +471,7 @@ function renderDisneyUserSummary(totals) {
 }
 
 // Salvar / Atualizar
-document.getElementById('disney-form').addEventListener('submit', async (e) => {
+document.getElementById('disney-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const id = document.getElementById('disney-edit-id').value;
     const value = parseFloat(document.getElementById('disney-value').value);
@@ -526,7 +526,7 @@ function closeDisneyModal() {
 }
 
 // Lógica de envio do FORMULÁRIO DO MODAL
-document.getElementById('disney-modal-form').addEventListener('submit', async (e) => {
+document.getElementById('disney-modal-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const id = document.getElementById('modal-disney-id').value;
     const value = parseFloat(document.getElementById('modal-disney-value').value);
@@ -759,45 +759,18 @@ function renderizarGraficoConsorcio(labels, dataLucro) {
 function switchTab(tab) {
     const mainTab = document.getElementById('tab-main');
     const indTab = document.getElementById('tab-individual');
-    const disneyTab = document.getElementById('tab-disney');
     const btnMain = document.getElementById('btn-tab-main');
     const btnInd = document.getElementById('btn-tab-individual');
-    const disneyInd = document.getElementById('btn-tab-disney');
-    const btnconsorc = document.getElementById('btn-tab-consorcio');
-    const consorc = document.getElementById('tab-consorcio'); // ADICIONE ESTA LINHA
 
     // Classes para o botão ATIVO
     const activeClasses = ['bg-blue-600', 'text-white', 'shadow-md'];
     // Classes para o botão INATIVO
     const inactiveClasses = ['text-gray-500', 'hover:bg-gray-100'];
 
-    if (tab === 'main') {
-        // Exibir conteúdo
-        mainTab.classList.remove('hidden');
-        indTab.classList.add('hidden');
-        disneyTab.classList.add('hidden');
-        consorc.classList.add('hidden');
-
-        // Estilizar botões
-        btnMain.classList.add(...activeClasses);
-        btnMain.classList.remove(...inactiveClasses);
-
-        btnInd.classList.add(...inactiveClasses);
-        btnInd.classList.remove(...activeClasses);
-
-        disneyInd.classList.add(...inactiveClasses);
-        disneyInd.classList.remove(...activeClasses);
-
-
-        btnconsorc.classList.add(...inactiveClasses);
-        btnconsorc.classList.remove(...activeClasses);
-
-    } else if (tab === 'individual') {
+    if (tab === 'individual') {
         // Exibir conteúdo
         mainTab.classList.add('hidden');
-        disneyTab.classList.add('hidden');
         indTab.classList.remove('hidden');
-        consorc.classList.add('hidden');
 
         // Estilizar botões
         btnInd.classList.add(...activeClasses);
@@ -806,12 +779,6 @@ function switchTab(tab) {
         btnMain.classList.add(...inactiveClasses);
         btnMain.classList.remove(...activeClasses);
 
-        disneyInd.classList.add(...inactiveClasses);
-        disneyInd.classList.remove(...activeClasses);
-
-
-        btnconsorc.classList.add(...inactiveClasses);
-        btnconsorc.classList.remove(...activeClasses);
         // Carrega os dados da aba individual
         if (typeof loadIndividualData === 'function') {
             loadIndividualData();
@@ -822,50 +789,37 @@ function switchTab(tab) {
         if (typeof checarStatusFatura === 'function') {
             checarStatusFatura();
         }
-    } else if (tab === 'disney') {
-        // Exibir conteúdo
-        mainTab.classList.add('hidden');
+    } else {
+        // 'main' (Geral) é o padrão
+        mainTab.classList.remove('hidden');
         indTab.classList.add('hidden');
-        disneyTab.classList.remove('hidden');
-        consorc.classList.add('hidden');
 
-        // Estilizar botões
+        btnMain.classList.add(...activeClasses);
+        btnMain.classList.remove(...inactiveClasses);
+
         btnInd.classList.add(...inactiveClasses);
         btnInd.classList.remove(...activeClasses);
-
-        btnMain.classList.add(...inactiveClasses);
-        btnMain.classList.remove(...activeClasses);
-
-        disneyInd.classList.add(...activeClasses);
-        disneyInd.classList.remove(...inactiveClasses);
-
-        btnconsorc.classList.add(...inactiveClasses);
-        btnconsorc.classList.remove(...activeClasses);
-        loadDisneyData()
-    } else if (tab === 'consorcio') {
-        // Exibir conteúdo
-        mainTab.classList.add('hidden');
-        disneyTab.classList.add('hidden');
-        indTab.classList.add('hidden');
-        consorc.classList.remove('hidden');
-
-        // Estilizar botões
-        btnInd.classList.add(...inactiveClasses);
-        btnInd.classList.remove(...activeClasses);
-
-        btnMain.classList.add(...inactiveClasses);
-        btnMain.classList.remove(...activeClasses);
-
-        disneyInd.classList.add(...inactiveClasses);
-        disneyInd.classList.remove(...activeClasses);
-
-
-        btnconsorc.classList.add(...activeClasses);
-        btnconsorc.classList.remove(...inactiveClasses);
-
-        setTimeout(calcularSimulacaoReal, 100); // Timeout pequeno para o Chart.js ler o tamanho da div
     }
 }
+
+/* ==========================================================
+   TEMA CLARO/ESCURO
+   ========================================================== */
+function toggleTheme() {
+    const html = document.documentElement;
+    const escuroAgora = html.classList.toggle('dark');
+    localStorage.setItem('theme', escuroAgora ? 'dark' : 'light');
+    const icone = document.getElementById('theme-toggle-icon');
+    if (icone) icone.textContent = escuroAgora ? '☀️' : '🌙';
+}
+
+// Ajusta o ícone do botão de tema conforme o que já foi aplicado no <head> (evita flash)
+document.addEventListener('DOMContentLoaded', () => {
+    const icone = document.getElementById('theme-toggle-icon');
+    if (icone) {
+        icone.textContent = document.documentElement.classList.contains('dark') ? '☀️' : '🌙';
+    }
+});
 
 async function loadIndividualData() {
     const month = indCurrentDate.getMonth();
@@ -878,6 +832,48 @@ async function loadIndividualData() {
     const response = await fetch(`/api/individual/list?month=${month}&year=${year}`);
     indDataCache = await response.json();
     renderIndividualTable();
+    sincronizarCategorias();
+}
+
+// Busca as categorias existentes no servidor (incluindo as criadas pelo chat) e atualiza
+// os três <select> de categoria, preservando o valor selecionado em cada um quando possível.
+async function sincronizarCategorias() {
+    try {
+        const response = await fetch('/api/individual/categories');
+        if (!response.ok) return;
+        const categorias = await response.json();
+        if (!Array.isArray(categorias) || categorias.length === 0) return;
+
+        const seletores = [
+            { id: 'ind-category', comTodas: false },
+            { id: 'edit-ind-category', comTodas: false },
+            { id: 'filter-category', comTodas: true },
+        ];
+
+        for (const { id, comTodas } of seletores) {
+            const select = document.getElementById(id);
+            if (!select) continue;
+            const valorAtual = select.value;
+            select.innerHTML = '';
+            if (comTodas) {
+                const optTodas = document.createElement('option');
+                optTodas.value = 'Todas';
+                optTodas.textContent = 'Todas Categorias';
+                select.appendChild(optTodas);
+            }
+            for (const categoria of categorias) {
+                const opt = document.createElement('option');
+                opt.value = categoria;
+                opt.textContent = categoria;
+                select.appendChild(opt);
+            }
+            if ([...select.options].some(o => o.value === valorAtual)) {
+                select.value = valorAtual;
+            }
+        }
+    } catch (e) {
+        console.error('Erro ao sincronizar categorias:', e);
+    }
 }
 
 let individualChart = null;
@@ -1309,6 +1305,11 @@ async function ativarProximoMes() {
         }
         showNotification(`A partir de agora, novos gastos valem para ${MESES_NOMES[data.overrideMes - 1]}/${data.overrideAno}!`);
         checarStatusFatura();
+
+        // Já muda a visualização pro mês seguinte, já que é pra lá que os novos gastos estão indo
+        // (mesma convenção de data local usada em changeIndMonth, pra não sofrer deslocamento de fuso)
+        indCurrentDate = new Date(data.overrideAno, data.overrideMes - 1, 1);
+        loadIndividualData();
     } catch (err) {
         console.error('Erro ao ativar modo próximo mês:', err);
         showNotification('Erro de conexão ao ativar modo próximo mês.', true);
@@ -1348,6 +1349,19 @@ function definirChatOwner(owner) {
     initChat();
 }
 
+function toggleChatFullscreen() {
+    const card = document.getElementById('chat-card');
+    const btn = document.getElementById('chat-expand-btn');
+    const cheio = card.classList.toggle('chat-fullscreen');
+    document.body.classList.toggle('overflow-hidden', cheio);
+    if (btn) {
+        btn.textContent = cheio ? '✕' : '⛶';
+        btn.title = cheio ? 'Fechar chat expandido' : 'Expandir chat';
+    }
+    const wrapper = document.getElementById('chat-messages');
+    if (wrapper) wrapper.scrollTop = wrapper.scrollHeight;
+}
+
 function trocarChatOwner() {
     const atual = localStorage.getItem(CHAT_OWNER_KEY);
     const novo = atual === 'Kevin' ? 'Any' : 'Kevin';
@@ -1356,19 +1370,45 @@ function trocarChatOwner() {
     }
 }
 
+// Escapa HTML e converte uma formatação leve de markdown (negrito, itálico, listas simples e
+// quebras de linha) em HTML seguro. Só é usado para mensagens do assistente — a mensagem do
+// usuário continua sempre como texto puro (sem interpretar HTML/markdown).
+function formatarMarkdownSimples(texto) {
+    const escapado = (texto || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+    let html = escapado
+        // negrito: **texto**
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        // itálico: *texto* (depois do negrito, pra não conflitar com **)
+        .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>')
+        // itens de lista "- item" ou "• item" em início de linha
+        .replace(/^[-•]\s+(.*)$/gm, '• $1');
+
+    return html.replace(/\n/g, '<br>');
+}
+
 function renderChatMessage(role, content) {
     const wrapper = document.getElementById('chat-messages');
     const bubble = document.createElement('div');
 
     if (role === 'user') {
         bubble.className = 'self-end max-w-[80%] bg-blue-600 text-white text-sm px-3 py-2 rounded-2xl rounded-br-sm';
+        bubble.textContent = content;
     } else {
         bubble.className = 'self-start max-w-[80%] bg-white border border-gray-200 text-gray-800 text-sm px-3 py-2 rounded-2xl rounded-bl-sm shadow-sm whitespace-pre-wrap';
+        bubble.innerHTML = formatarMarkdownSimples(content);
     }
-    bubble.textContent = content;
     wrapper.appendChild(bubble);
     wrapper.scrollTop = wrapper.scrollHeight;
     return bubble;
+}
+
+// Atualiza o conteúdo de uma bolha do assistente já renderizada (ex: trocar "..." pela resposta final).
+function atualizarBolhaAssistente(bubble, content) {
+    bubble.innerHTML = formatarMarkdownSimples(content);
 }
 
 async function carregarHistoricoChat() {
@@ -1410,16 +1450,16 @@ document.getElementById('chat-form')?.addEventListener('submit', async (e) => {
         const data = await response.json();
 
         if (!response.ok) {
-            bubbleCarregando.textContent = data.error || 'Erro ao processar mensagem.';
+            atualizarBolhaAssistente(bubbleCarregando, data.error || 'Erro ao processar mensagem.');
         } else {
-            bubbleCarregando.textContent = data.reply;
-            if (data.action === 'gasto') {
+            atualizarBolhaAssistente(bubbleCarregando, data.reply);
+            if (data.action === 'gasto' || data.action === 'gasto_parcelado') {
                 loadIndividualData();
             }
         }
     } catch (err) {
         console.error('Erro no chat:', err);
-        bubbleCarregando.textContent = 'Erro de conexão com o servidor.';
+        atualizarBolhaAssistente(bubbleCarregando, 'Erro de conexão com o servidor.');
     } finally {
         sendBtn.disabled = false;
         input.focus();

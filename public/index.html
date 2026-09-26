@@ -7,6 +7,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Planejamento Financeiro Pessoal</title>
+    <!-- Aplica o tema salvo (ou o do sistema) ANTES de renderizar, pra não piscar claro->escuro -->
+    <script>
+        (function () {
+            var salvo = localStorage.getItem('theme');
+            var tema = salvo || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            if (tema === 'dark') document.documentElement.classList.add('dark');
+        })();
+    </script>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -47,6 +55,89 @@
             width: 500px;
             box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
         }
+
+        /* ===== MODO ESCURO =====
+           O app usa classes Tailwind fixas (bg-white, text-gray-800 etc) em vez de variantes dark:,
+           então em vez de reescrever cada elemento, sobrepomos as classes mais usadas quando a tag
+           <html> tem a classe "dark". Não é 100% perfeito em cada canto, mas cobre o app inteiro. */
+        html.dark body {
+            background-color: #0f172a;
+            color: #e2e8f0;
+        }
+
+        html.dark .bg-white {
+            background-color: #1e293b !important;
+        }
+
+        html.dark .bg-gray-50,
+        html.dark .bg-gray-50\/50 {
+            background-color: #0f172a !important;
+        }
+
+        html.dark .bg-gray-100 {
+            background-color: #1e293b !important;
+        }
+
+        html.dark .text-gray-900,
+        html.dark .text-gray-800,
+        html.dark .text-gray-700 {
+            color: #f1f5f9 !important;
+        }
+
+        html.dark .text-gray-600,
+        html.dark .text-gray-500 {
+            color: #94a3b8 !important;
+        }
+
+        html.dark .text-gray-400 {
+            color: #64748b !important;
+        }
+
+        html.dark .border-gray-100,
+        html.dark .border-gray-200 {
+            border-color: #334155 !important;
+        }
+
+        html.dark input,
+        html.dark select,
+        html.dark textarea {
+            background-color: #0f172a !important;
+            color: #e2e8f0 !important;
+        }
+
+        html.dark .shadow-sm,
+        html.dark .shadow,
+        html.dark .shadow-md,
+        html.dark .shadow-lg,
+        html.dark .shadow-xl,
+        html.dark .shadow-2xl {
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.45) !important;
+        }
+
+        html.dark .modal-content {
+            background-color: #1e293b;
+            color: #e2e8f0;
+        }
+
+        #chat-card.chat-fullscreen {
+            position: fixed;
+            inset: 0;
+            z-index: 60;
+            margin: 0;
+            border-radius: 0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #chat-card.chat-fullscreen #chat-container {
+            flex: 1;
+            min-height: 0;
+        }
+
+        #chat-card.chat-fullscreen #chat-messages {
+            height: auto;
+            flex: 1;
+        }
     </style>
     <!-- Chart.js CDN (Necessário para o Gráfico de Pizza) -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
@@ -58,7 +149,7 @@
     <div id="notification-container" class="fixed top-4 right-4 z-50 w-full max-w-xs">
         <!-- Notificações serão injetadas aqui -->
     </div>
-    <div class="flex justify-center mt-14 mb-4">
+    <div class="flex justify-center items-center gap-3 mt-14 mb-4">
         <div class="flex bg-white p-1 rounded-xl shadow-sm border border-gray-200">
             <button id="btn-tab-main" onclick="switchTab('main')"
                 class="py-2 px-6 rounded-lg text-sm font-bold transition-all duration-300 mr-2">
@@ -68,15 +159,11 @@
                 class="py-2 px-6 rounded-lg text-sm font-bold transition-all duration-300">
                 Individual
             </button>
-            <button id="btn-tab-consorcio" onclick="switchTab('consorcio')"
-                class="py-2 px-6 rounded-lg text-sm font-bold transition-all duration-300">
-                Consórcio
-            </button>
-            <button id="btn-tab-disney" onclick="switchTab('disney')"
-                class="py-2 px-6 rounded-lg text-sm font-bold transition-all duration-300" style="display: none;">
-                Disney
-            </button>
         </div>
+        <button id="btn-theme-toggle" onclick="toggleTheme()" title="Alternar tema claro/escuro"
+            class="w-10 h-10 flex items-center justify-center bg-white rounded-xl shadow-sm border border-gray-200 text-lg">
+            <span id="theme-toggle-icon">🌙</span>
+        </button>
     </div>
 
     <div id="tab-individual" class="hidden container mx-auto p-4 md:p-8">
@@ -114,7 +201,7 @@
         </div>
 
         <!-- CHAT DE GASTOS (Claude API) -->
-        <div class="bg-white rounded-xl shadow-lg mb-6 overflow-hidden">
+        <div id="chat-card" class="bg-white rounded-xl shadow-lg mb-6 overflow-hidden">
             <div class="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-gray-50">
                 <div class="flex items-center gap-2">
                     <span class="text-lg">💬</span>
@@ -124,6 +211,8 @@
                     <span>Lançando como:</span>
                     <button id="chat-owner-badge" onclick="trocarChatOwner()"
                         class="font-bold text-blue-600 hover:underline">—</button>
+                    <button id="chat-expand-btn" onclick="toggleChatFullscreen()" title="Expandir chat"
+                        class="ml-2 text-gray-400 hover:text-gray-700 text-base leading-none">⛶</button>
                 </div>
             </div>
 
@@ -139,7 +228,7 @@
                     mensagem específica, é só escrever isso na frase (ex: "Almoço 54,50 conjunto").</p>
             </div>
 
-            <div id="chat-container" class="hidden">
+            <div id="chat-container" class="hidden flex flex-col">
                 <div id="chat-messages" class="h-80 overflow-y-auto p-4 flex flex-col gap-2 bg-gray-50/50"></div>
                 <form id="chat-form" class="flex items-center gap-2 p-3 border-t border-gray-100">
                     <input type="text" id="chat-input" placeholder='Ex: "Monster 12,99" ou "no que mais gastei esse mês"'
@@ -425,143 +514,6 @@
             </form>
         </div>
     </div>
-    <div id="tab-disney" class="hidden container mx-auto p-4 md:p-8">
-        <div class="bg-blue-50 border-l-4 border-blue-500 p-4 mb-6 rounded flex justify-between items-center">
-            <p class="text-blue-700 font-bold">Cotação Fixa: US$ 1.00 = R$ 5,45</p>
-        </div>
-
-        <div class="bg-white p-6 rounded-xl shadow-lg mb-6 border border-gray-100">
-            <h2 id="disney-form-title" class="text-lg font-bold mb-4 text-gray-800">Nova Compra Disney</h2>
-
-            <input type="hidden" id="disney-edit-id" value="">
-
-            <form id="disney-form" class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <input type="date" id="disney-date" class="border p-2 rounded-lg" required>
-                <input type="text" id="disney-desc" placeholder="Descrição da compra" class="border p-2 rounded-lg"
-                    required>
-
-                <div class="flex gap-1">
-                    <input type="number" id="disney-value" placeholder="Valor" step="0.01"
-                        class="border p-2 rounded-l-lg w-full" required>
-                    <select id="disney-currency" class="border-y border-r p-1 rounded-r-lg bg-gray-50 font-bold">
-                        <option value="USD">USD ($)</option>
-                        <option value="BRL">BRL (R$)</option>
-                    </select>
-                </div>
-
-                <select id="disney-responsible" class="border p-2 rounded-lg bg-white" required>
-                    <option value="" disabled selected>Quem pagou?</option>
-                    <option value="Kevin">Kevin</option>
-                    <option value="Any">Any</option>
-                    <option value="Conjunto">Conjunto</option>
-                    <option value="Maria Vitoria">Maria Vitoria</option>
-                </select>
-
-                <select id="disney-category" class="border p-2 rounded-lg bg-white">
-                    <option value="Alimentação">🍴 Alimentação</option>
-                    <option value="Compras">🛍️ Compras</option>
-                    <option value="Presente">🎁 Presente</option>
-                    <option value="Transporte">🚗 Transporte</option>
-                    <option value="Outros">✨ Outros</option>
-                </select>
-
-                <div class="flex gap-2">
-                    <button type="submit" id="disney-submit-btn"
-                        class="flex-1 bg-blue-600 text-white rounded-lg font-bold py-2">Salvar</button>
-                    <button type="button" id="disney-cancel-btn"
-                        class="hidden bg-gray-400 text-white rounded-lg font-bold px-4 py-2"
-                        onclick="cancelDisneyEdit()">Cancelar</button>
-                </div>
-            </form>
-        </div>
-
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-            <div class="bg-white border p-4 rounded-xl shadow-sm">
-                <h3 class="text-xs font-bold text-gray-500 uppercase">Gasto em Dólar (Efetivo)</h3>
-                <p id="total-disney-only-usd" class="text-2xl font-bold text-green-600">US$ 0,00</p>
-            </div>
-            <div class="bg-white border p-4 rounded-xl shadow-sm">
-                <h3 class="text-xs font-bold text-gray-500 uppercase">Gasto em Real (Efetivo)</h3>
-                <p id="total-disney-only-brl" class="text-2xl font-bold text-blue-600">R$ 0,00</p>
-            </div>
-            <div class="bg-blue-600 p-4 rounded-xl shadow-md text-white">
-                <h3 class="text-xs font-bold uppercase opacity-80">Total Geral (Convertido R$)</h3>
-                <p id="total-disney-general-brl" class="text-2xl font-bold">R$ 0,00</p>
-            </div>
-        </div>
-
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-            <div id="disney-user-summary" class="flex flex-col gap-4">
-            </div>
-            <!-- <div id="disney-user-summary" class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-        </div> -->
-
-            <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-lg border-t-4 border-yellow-500 mb-6">
-                <div class="flex flex-col md:flex-row justify-between items-center mb-4 border-b pb-2 gap-4">
-                    <h3 class="text-xl font-bold text-gray-800">Distribuição de Despesas Disney</h3>
-
-                    <div class="flex items-center gap-2">
-                        <select id="filter-disney-responsible" onchange="filterDisneyDisplay()"
-                            class="bg-gray-50 border-none text-gray-600 text-sm rounded-lg p-2 outline-none">
-                            <option value="Todos">Todos</option>
-                            <option value="Any">Any</option>
-                            <option value="Kevin">Kevin</option>
-                            <option value="Conjunto">Conjunto</option>
-                            <option value="Maria Vitoria">Maria Vitoria</option>
-                        </select>
-                    </div>
-                </div>
-
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div id="disneyChartContainer" class="w-full h-80 flex items-center justify-center">
-                        <canvas id="disney-chart-canvas"></canvas>
-                    </div>
-
-                    <div class="overflow-x-auto">
-                        <h4 class="font-semibold mb-2 text-gray-700">Gastos por Categoria (R$)</h4>
-                        <table class="min-w-full divide-y divide-gray-200">
-                            <thead class="bg-gray-50">
-                                <tr>
-                                    <th
-                                        class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                        Categoria</th>
-                                    <th
-                                        class="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                        Total</th>
-                                </tr>
-                            </thead>
-                            <tbody id="disney-category-body"
-                                class="bg-white divide-y divide-gray-200 text-sm text-gray-700">
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-            <div class="overflow-x-auto">
-                <table class="w-full text-left text-sm min-w-[800px]" id="disney-table">
-                    <thead class="bg-gray-50 border-b border-gray-100">
-                        <tr>
-                            <th class="p-4 font-bold text-gray-400 uppercase text-xs whitespace-nowrap">Data</th>
-                            <th class="p-4 font-bold text-gray-400 uppercase text-xs whitespace-nowrap">Descrição</th>
-                            <th class="p-4 font-bold text-gray-400 uppercase text-xs whitespace-nowrap">Responsável</th>
-                            <th class="p-4 font-bold text-gray-400 uppercase text-xs whitespace-nowrap">Categoria</th>
-                            <th class="p-4 text-right font-bold text-gray-400 uppercase text-xs whitespace-nowrap">Valor
-                                USD</th>
-                            <th class="p-4 text-right font-bold text-gray-400 uppercase text-xs whitespace-nowrap">Valor
-                                BRL</th>
-                            <th class="p-4 text-center font-bold text-gray-400 uppercase text-xs whitespace-nowrap">
-                                Ações</th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-gray-50"></tbody>
-                </table>
-            </div>
-        </div>
-
-    </div>
     <div id="tab-main">
         <div class="container mx-auto p-4 md:p-8">
             <header class="text-center mb-8">
@@ -739,167 +691,6 @@
                 </div>
             </section>
 
-        </div>
-    </div>
-    <div id="tab-consorcio" class="hidden container mx-auto p-4 md:p-8 text-gray-900">
-        <div
-            class="flex flex-col md:flex-row gap-4 mb-6 items-end bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-            <input type="hidden" id="cons-id-ativo" value="">
-
-            <div class="flex-1 w-full">
-                <label class="text-[10px] text-gray-400 font-bold uppercase ml-1">Meus Consórcios</label>
-                <select id="select-consorcio-ativo" onchange="carregarConsorcioSelecionado()"
-                    class="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:border-blue-500 appearance-none bg-white">
-                    <option value="">-- Novo Simulador Livre --</option>
-                </select>
-            </div>
-
-            <div class="flex gap-2">
-                <button onclick="salvarConsorcio()"
-                    class="bg-blue-600 text-white px-5 py-2 rounded-lg font-bold text-sm shadow-md hover:bg-blue-700 transition-all flex items-center gap-2">
-                    <span id="label-btn-salvar-cons">Salvar Novo</span>
-                </button>
-
-                <button onclick="deletarConsorcioAtivo()" id="btn-delete-consorcio"
-                    class="hidden bg-red-100 text-red-600 px-4 py-2 rounded-lg font-bold text-sm hover:bg-red-200 transition-all">
-                    Excluir
-                </button>
-            </div>
-        </div>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div class="bg-white p-6 rounded-xl shadow-md border border-gray-200">
-                <h2 class="text-xl font-bold mb-4 text-blue-600">Configuração do Plano</h2>
-                <div class="space-y-4">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700">Valor da Carta (Crédito R$)</label>
-                        <input type="number" id="cons-valor-carta" value="55042.60" step="0.01"
-                            class="w-full p-2 border border-gray-300 rounded-lg bg-white text-gray-900 focus:ring-2 focus:ring-blue-500 outline-none"
-                            oninput="atualizarAgioPorPercentual()">
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Prazo (Meses)</label>
-                            <input type="number" id="cons-prazo" value="46"
-                                class="w-full p-2 border border-gray-300 rounded-lg bg-white text-gray-900 outline-none">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Mês Contemplação</label>
-                            <input type="number" id="cons-mes-contemplacao" value="1"
-                                class="w-full p-2 border border-gray-300 rounded-lg bg-white text-gray-900 outline-none">
-                        </div>
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Parcela Pré (R$)</label>
-                            <input type="number" id="cons-parcela-pre" value="1411.95" step="0.01"
-                                class="w-full p-2 border border-gray-300 rounded-lg bg-white text-gray-900 outline-none">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Parcela Pós (R$)</label>
-                            <input type="number" id="cons-parcela-pos" value="1183.53" step="0.01"
-                                class="w-full p-2 border border-gray-300 rounded-lg bg-white text-gray-900 outline-none">
-                        </div>
-                    </div>
-
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700">Lance Pago (R$)</label>
-                        <input type="number" id="cons-lance" value="10502" step="0.01"
-                            class="w-full p-2 border border-gray-300 rounded-lg bg-white text-gray-900 outline-none">
-                    </div>
-
-                    <div class="p-4 bg-blue-50 rounded-lg border border-blue-200 mt-4">
-                        <div class="flex justify-between items-center mb-2">
-                            <label class="block text-sm font-bold text-blue-800">Venda baseada no Crédito</label>
-                            <span id="label-percent-venda"
-                                class="text-xs font-bold bg-blue-200 text-blue-800 px-2 py-0.5 rounded">40%</span>
-                        </div>
-                        <div class="grid grid-cols-2 gap-4">
-                            <div>
-                                <label class="block text-[10px] uppercase font-bold text-blue-600">% de Venda</label>
-                                <input type="number" id="cons-percent-venda" value="40" step="0.1"
-                                    class="w-full p-2 border-2 border-blue-300 rounded-lg font-bold text-gray-900 bg-white"
-                                    oninput="atualizarAgioPorPercentual()">
-                            </div>
-                            <div>
-                                <label class="block text-[10px] uppercase font-bold text-blue-600">Valor Venda
-                                    (R$)</label>
-                                <input type="number" id="cons-venda-agio" value="22017.04" step="0.01"
-                                    class="w-full p-2 border-2 border-blue-300 rounded-lg font-bold text-gray-900 bg-white"
-                                    oninput="calcularSimulacaoReal()">
-                            </div>
-                        </div>
-
-                        <div class="grid grid-cols-2 gap-4 mt-3 pt-3 border-t border-blue-200">
-                            <div>
-                                <label class="block text-[10px] uppercase font-bold text-red-600">Comissão (%)</label>
-                                <input type="number" id="cons-percent-comissao" value="10" step="0.1"
-                                    class="w-full p-2 border border-red-200 rounded-lg font-medium text-gray-900 bg-white"
-                                    oninput="atualizarComissaoPorPercentual()">
-                            </div>
-                            <div>
-                                <label class="block text-[10px] uppercase font-bold text-red-600">Comissão (R$)</label>
-                                <input type="number" id="cons-valor-comissao" value="2201.70" step="0.01"
-                                    class="w-full p-2 border border-red-200 rounded-lg font-medium text-gray-900 bg-white"
-                                    oninput="calcularSimulacaoReal()">
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <button onclick="calcularSimulacaoReal()"
-                    class="mt-6 w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 shadow-lg active:scale-95">
-                    Atualizar Cálculos
-                </button>
-            </div>
-
-            <div class="space-y-6">
-                <div class="bg-white p-6 rounded-xl shadow-md border border-gray-200 text-center">
-                    <h3 class="text-gray-500 font-medium">Investimento Inicial (Mês 0)</h3>
-                    <div id="cons-invest-inicial" class="text-3xl font-bold text-gray-800">R$ 0,00</div>
-                </div>
-                <div class="bg-white p-6 rounded-xl shadow-md border border-gray-200 text-center">
-                    <h3 class="text-gray-500 font-medium text-lg">Lucro Líquido Estimado</h3>
-                    <div id="cons-feedback-lucro" class="text-5xl font-black text-green-600">R$ 0,00</div>
-                    <p id="cons-alerta-tempo" class="mt-2 text-sm font-semibold"></p>
-                </div>
-            </div>
-        </div>
-
-        <div class="mt-8 bg-white p-6 rounded-xl shadow-md border border-gray-200">
-            <div class="flex justify-between items-center mb-6">
-                <h3 class="font-bold text-gray-700">Projeção Detalhada</h3>
-                <div class="flex bg-gray-100 p-1 rounded-lg border border-gray-200">
-                    <button onclick="toggleConsorcioView('chart')" id="btn-view-chart"
-                        class="py-1 px-4 rounded-md text-xs font-bold transition-all bg-white shadow-sm text-blue-600">
-                        Gráfico
-                    </button>
-                    <button onclick="toggleConsorcioView('table')" id="btn-view-table"
-                        class="py-1 px-4 rounded-md text-xs font-bold transition-all text-gray-500">
-                        Tabela
-                    </button>
-                </div>
-            </div>
-
-            <div id="consorcio-chart-container" class="h-[350px]">
-                <canvas id="consorcioChart"></canvas>
-            </div>
-
-            <div id="consorcio-table-container" class="hidden overflow-x-auto">
-                <table class="w-full text-left border-collapse">
-                    <thead>
-                        <tr class="text-gray-400 text-[10px] uppercase tracking-wider border-b border-gray-100">
-                            <th class="pb-3 font-medium text-left">Tempo</th>
-                            <th class="pb-3 font-medium text-right">Total Investido</th>
-                            <th class="pb-3 font-medium text-right">Parcelas Pós</th>
-                            <th class="pb-3 font-medium text-right">Lucro Líquido</th>
-                            <th class="pb-3 font-medium text-right">ROI (%)</th>
-                        </tr>
-                    </thead>
-                    <tbody id="consorcio-table-body" class="text-sm font-semibold text-gray-900">
-                    </tbody>
-                </table>
-            </div>
         </div>
     </div>
     <!-- MODAL DE EDIÇÃO -->

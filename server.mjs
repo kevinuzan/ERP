@@ -24,6 +24,53 @@ let appSettingsCollection;
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
 const CATEGORIAS_VALIDAS = ['Lazer', 'Alimentação', 'Transporte', 'Saúde', 'Trabalho', 'Outros'];
+
+// Normaliza um nome de categoria pra comparação (minúsculo, sem acento, sem espaços nas pontas)
+// evitando duplicatas tipo "Bebida" / "bebida" / "Bebidas ".
+function normalizarCategoria(nome) {
+    return (nome || '')
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .trim()
+        .toLowerCase();
+}
+
+// Dado um nome de categoria sugerido (pode ser novo) e a lista de categorias já existentes,
+// retorna o nome já existente se houver um equivalente (case/acento-insensitive), ou o nome
+// novo formatado em Title Case caso contrário. Nunca retorna string vazia.
+function resolverCategoria(nomeSugerido, categoriasExistentes) {
+    const sugerido = (nomeSugerido || '').trim();
+    if (!sugerido) return 'Outros';
+    const normalizado = normalizarCategoria(sugerido);
+    const existente = categoriasExistentes.find(c => normalizarCategoria(c) === normalizado);
+    if (existente) return existente;
+    // Formata a categoria nova em Title Case (primeira letra de cada palavra maiúscula)
+    return sugerido
+        .toLowerCase()
+        .split(/\s+/)
+        .map(p => p.charAt(0).toUpperCase() + p.slice(1))
+        .join(' ');
+}
+
+// Busca as categorias que já existem nos lançamentos, combinando com as categorias "base".
+// Usado tanto pro prompt do chat quanto pro endpoint que alimenta os <select> do front-end.
+async function listarCategorias() {
+    let categoriasDb = [];
+    try {
+        if (individualCollection) {
+            categoriasDb = await individualCollection.distinct('category');
+        }
+    } catch (e) {
+        console.error('Erro ao buscar categorias existentes:', e);
+    }
+    const todas = [...CATEGORIAS_VALIDAS];
+    for (const c of categoriasDb) {
+        if (c && !todas.some(t => normalizarCategoria(t) === normalizarCategoria(c))) {
+            todas.push(c);
+        }
+    }
+    return todas;
+}
 const OWNERS_VALIDOS = ['Kevin', 'Any', 'Conjunto'];
 
 // --- FECHAMENTO DA FATURA (cartão fecha dia 25) ---
@@ -500,6 +547,15 @@ app.get('/api/individual/list', async (req, res) => {
     }
 });
 
+app.get('/api/individual/categories', async (req, res) => {
+    try {
+        const categorias = await listarCategorias();
+        res.json(categorias);
+    } catch (error) {
+        res.status(500).json({ error: "Erro ao buscar categorias" });
+    }
+});
+
 // --- FECHAMENTO DA FATURA: status e ativação do modo "próximo mês" ---
 app.get('/api/billing-status', async (req, res) => {
     if (!appSettingsCollection) {
@@ -858,7 +914,7 @@ const CHAT_TOOLS = [
             properties: {
                 description: { type: 'string', description: 'Descrição curta do gasto (produto, serviço ou estabelecimento).' },
                 value: { type: 'number', description: 'Valor do gasto em reais, sempre um número positivo (ex: 12.99).' },
-                category: { type: 'string', enum: CATEGORIAS_VALIDAS, description: 'Categoria que melhor descreve o gasto.' },
+                category: { type: 'string', description: 'Categoria que melhor descreve o gasto. Reutilize uma categoria já existente sempre que fizer sentido; só crie um nome novo (curto, Title Case, ex: "Bebida") se nenhuma categoria existente descrever bem o gasto.' },
                 owner: {
                     type: 'string',
                     enum: OWNERS_VALIDOS,
@@ -877,7 +933,7 @@ const CHAT_TOOLS = [
                 description: { type: 'string', description: 'Descrição do produto/serviço comprado.' },
                 installments: { type: 'integer', description: 'Número de parcelas (ex: 10).' },
                 installmentValue: { type: 'number', description: 'Valor de CADA parcela em reais — não o valor total da compra.' },
-                category: { type: 'string', enum: CATEGORIAS_VALIDAS, description: 'Categoria que melhor descreve o gasto.' },
+                category: { type: 'string', description: 'Categoria que melhor descreve o gasto. Reutilize uma categoria já existente sempre que fizer sentido; só crie um nome novo (curto, Title Case, ex: "Bebida") se nenhuma categoria existente descrever bem o gasto.' },
                 owner: {
                     type: 'string',
                     enum: OWNERS_VALIDOS,
@@ -954,8 +1010,10 @@ function filtroPorPeriodo(periodo, start, end) {
     return { date: { $gte: start, $lt: end } };
 }
 
-const CHAT_SYSTEM_PROMPT = `Você é o assistente do app financeiro pessoal de um casal (Kevin e Any/Ana), que também lança gastos como "Conjunto" quando é dividido.
-Categorias válidas: ${CATEGORIAS_VALIDAS.join(', ')}.
+function montarChatSystemPrompt(categoriasExistentes) {
+    return `Você é o assistente do app financeiro pessoal de um casal (Kevin e Any/Ana), que também lança gastos como "Conjunto" quando é dividido.
+Categorias já existentes (use uma destas sempre que fizer sentido): ${categoriasExistentes.join(', ')}.
+Se o gasto não se encaixa bem em nenhuma categoria existente, invente uma categoria nova, curta e em Title Case (ex: "Bebida", "Pet", "Assinaturas"). Evite criar uma categoria nova que seja praticamente sinônima de uma já existente (ex: não crie "Comida" se já existe "Alimentação").
 Donos válidos: ${OWNERS_VALIDOS.join(', ')}.
 Data de hoje: ${new Date().toISOString().slice(0, 10)}.
 
@@ -963,6 +1021,7 @@ Quando a mensagem do usuário descrever uma compra/gasto recém-feito À VISTA, 
 Quando a mensagem mencionar EXPLICITAMENTE parcelamento (palavras como "parcelado", "parcela", "vezes", "Nx de", "em N vezes"), chame a ferramenta registrar_gasto_parcelado em vez de registrar_gasto.
 Quando a mensagem for uma pergunta ou pedido de resumo/relatório sobre os gastos, chame a ferramenta consultar_gastos.
 Se a mensagem não for nenhuma dessas coisas (ex: um cumprimento), responda normalmente em texto, de forma breve.`;
+}
 
 app.post('/api/chat/message', async (req, res) => {
     if (!chatCollection || !individualCollection) {
@@ -981,10 +1040,12 @@ app.post('/api/chat/message', async (req, res) => {
     try {
         await chatCollection.insertOne({ role: 'user', content: message, owner: ownerPadrao, date: new Date() });
 
+        const categoriasExistentes = await listarCategorias();
+
         const primeiraResposta = await anthropic.messages.create({
             model: CLAUDE_MODEL,
             max_tokens: 1024,
-            system: CHAT_SYSTEM_PROMPT,
+            system: montarChatSystemPrompt(categoriasExistentes),
             tools: CHAT_TOOLS,
             messages: [{ role: 'user', content: message }],
         });
@@ -998,7 +1059,7 @@ app.post('/api/chat/message', async (req, res) => {
         if (toolUse && toolUse.name === 'registrar_gasto') {
             const { description, value, category } = toolUse.input;
             const owner = OWNERS_VALIDOS.includes(toolUse.input.owner) ? toolUse.input.owner : ownerPadrao;
-            const categoriaFinal = CATEGORIAS_VALIDAS.includes(category) ? category : 'Outros';
+            const categoriaFinal = resolverCategoria(category, categoriasExistentes);
 
             const dataGasto = new Date();
             const referenciaChat = await calcularReferencia(dataGasto);
@@ -1022,7 +1083,7 @@ app.post('/api/chat/message', async (req, res) => {
             const installments = Math.max(1, parseInt(toolUse.input.installments) || 1);
             const installmentValue = Math.abs(parseFloat(toolUse.input.installmentValue));
             const owner = OWNERS_VALIDOS.includes(toolUse.input.owner) ? toolUse.input.owner : ownerPadrao;
-            const categoriaFinal = CATEGORIAS_VALIDAS.includes(category) ? category : 'Outros';
+            const categoriaFinal = resolverCategoria(category, categoriasExistentes);
 
             const agora = new Date();
             const gastosParcelados = [];
