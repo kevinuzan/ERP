@@ -230,10 +230,10 @@
 
             <div id="chat-container" class="hidden flex flex-col">
                 <div id="chat-messages" class="h-80 overflow-y-auto p-4 flex flex-col gap-2 bg-gray-50/50"></div>
-                <form id="chat-form" class="flex items-center gap-2 p-3 border-t border-gray-100">
-                    <input type="text" id="chat-input" placeholder='Ex: "Monster 12,99" ou "no que mais gastei esse mês"'
-                        class="flex-1 border border-gray-200 p-2.5 rounded-lg text-sm focus:border-blue-500 outline-none"
-                        autocomplete="off" required>
+                <form id="chat-form" class="flex items-end gap-2 p-3 border-t border-gray-100">
+                    <textarea id="chat-input" placeholder='Ex: "Monster 12,99" ou uma lista com vários gastos (Shift+Enter pra quebrar linha)'
+                        class="flex-1 border border-gray-200 p-2.5 rounded-lg text-sm focus:border-blue-500 outline-none resize-none leading-snug"
+                        rows="1" autocomplete="off" required></textarea>
                     <button type="submit" id="chat-send-btn"
                         class="w-10 h-10 bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center justify-center shadow-md transition-all active:scale-90 shrink-0">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

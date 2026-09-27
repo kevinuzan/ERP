@@ -1020,6 +1020,7 @@ Data de hoje: ${new Date().toISOString().slice(0, 10)}.
 Quando a mensagem do usuário descrever uma compra/gasto recém-feito À VISTA, chame a ferramenta registrar_gasto.
 Quando a mensagem mencionar EXPLICITAMENTE parcelamento (palavras como "parcelado", "parcela", "vezes", "Nx de", "em N vezes"), chame a ferramenta registrar_gasto_parcelado em vez de registrar_gasto.
 Quando a mensagem for uma pergunta ou pedido de resumo/relatório sobre os gastos, chame a ferramenta consultar_gastos.
+Se a mensagem contiver VÁRIOS gastos (por exemplo, uma lista com um item por linha, cada um com sua própria descrição e valor, como "- refrigerante: R$ 12,73"), chame a ferramenta registrar_gasto (ou registrar_gasto_parcelado, se for o caso) UMA VEZ PARA CADA item da lista, todas as chamadas na mesma resposta — nunca registre só o primeiro item e ignore o resto.
 Se a mensagem não for nenhuma dessas coisas (ex: um cumprimento), responda normalmente em texto, de forma breve.`;
 }
 
@@ -1044,71 +1045,98 @@ app.post('/api/chat/message', async (req, res) => {
 
         const primeiraResposta = await anthropic.messages.create({
             model: CLAUDE_MODEL,
-            max_tokens: 1024,
+            max_tokens: 4096,
             system: montarChatSystemPrompt(categoriasExistentes),
             tools: CHAT_TOOLS,
             messages: [{ role: 'user', content: message }],
         });
 
-        const toolUse = primeiraResposta.content.find(bloco => bloco.type === 'tool_use');
+        const toolUses = primeiraResposta.content.filter(bloco => bloco.type === 'tool_use');
+        const gastoToolUses = toolUses.filter(t => t.name === 'registrar_gasto' || t.name === 'registrar_gasto_parcelado');
+        const consultaToolUse = toolUses.find(t => t.name === 'consultar_gastos');
 
         let reply;
         let acao = 'chat';
         let detalhes = null;
 
-        if (toolUse && toolUse.name === 'registrar_gasto') {
-            const { description, value, category } = toolUse.input;
-            const owner = OWNERS_VALIDOS.includes(toolUse.input.owner) ? toolUse.input.owner : ownerPadrao;
-            const categoriaFinal = resolverCategoria(category, categoriasExistentes);
+        if (gastoToolUses.length > 0) {
+            // Categorias já resolvidas nesta mesma mensagem, pra que dois itens parecidos (ex: duas
+            // "bebidas" na mesma lista) caiam exatamente na mesma categoria nova, em vez de duas variações.
+            const categoriasDaSessao = [...categoriasExistentes];
+            const linhasResposta = [];
+            const detalhesItens = [];
 
-            const dataGasto = new Date();
-            const referenciaChat = await calcularReferencia(dataGasto);
-            const gasto = {
-                description,
-                value: Math.abs(parseFloat(value)),
-                owner,
-                category: categoriaFinal,
-                date: dataGasto,
-                origem: 'chat-claude',
-                ...referenciaChat,
-            };
-            const result = await individualCollection.insertOne(gasto);
+            for (const toolUse of gastoToolUses) {
+                if (toolUse.name === 'registrar_gasto') {
+                    const { description, value, category } = toolUse.input;
+                    const owner = OWNERS_VALIDOS.includes(toolUse.input.owner) ? toolUse.input.owner : ownerPadrao;
+                    const categoriaFinal = resolverCategoria(category, categoriasDaSessao);
+                    if (!categoriasDaSessao.some(c => normalizarCategoria(c) === normalizarCategoria(categoriaFinal))) {
+                        categoriasDaSessao.push(categoriaFinal);
+                    }
 
-            acao = 'gasto';
-            detalhes = { _id: result.insertedId, ...gasto };
-            reply = `✅ Gasto registrado: *${description}* — R$ ${gasto.value.toFixed(2).replace('.', ',')} (${categoriaFinal}, ${owner})`;
+                    const dataGasto = new Date();
+                    const referenciaChat = await calcularReferencia(dataGasto);
+                    const gasto = {
+                        description,
+                        value: Math.abs(parseFloat(value)),
+                        owner,
+                        category: categoriaFinal,
+                        date: dataGasto,
+                        origem: 'chat-claude',
+                        ...referenciaChat,
+                    };
+                    const result = await individualCollection.insertOne(gasto);
 
-        } else if (toolUse && toolUse.name === 'registrar_gasto_parcelado') {
-            const { description, category } = toolUse.input;
-            const installments = Math.max(1, parseInt(toolUse.input.installments) || 1);
-            const installmentValue = Math.abs(parseFloat(toolUse.input.installmentValue));
-            const owner = OWNERS_VALIDOS.includes(toolUse.input.owner) ? toolUse.input.owner : ownerPadrao;
-            const categoriaFinal = resolverCategoria(category, categoriasExistentes);
+                    detalhesItens.push({ tipo: 'gasto', _id: result.insertedId, ...gasto });
+                    linhasResposta.push(`✅ *${description}* — R$ ${gasto.value.toFixed(2).replace('.', ',')} (${categoriaFinal}, ${owner})`);
 
-            const agora = new Date();
-            const gastosParcelados = [];
-            for (let i = 0; i < installments; i++) {
-                const dataParcela = new Date(agora.getTime());
-                dataParcela.setUTCMonth(dataParcela.getUTCMonth() + i);
-                const referenciaParcela = await calcularReferencia(dataParcela);
-                gastosParcelados.push({
-                    description: installments > 1 ? `${description} (${i + 1}/${installments})` : description,
-                    value: installmentValue,
-                    owner,
-                    category: categoriaFinal,
-                    date: dataParcela,
-                    origem: 'chat-claude',
-                    ...referenciaParcela,
-                });
+                } else if (toolUse.name === 'registrar_gasto_parcelado') {
+                    const { description, category } = toolUse.input;
+                    const installments = Math.max(1, parseInt(toolUse.input.installments) || 1);
+                    const installmentValue = Math.abs(parseFloat(toolUse.input.installmentValue));
+                    const owner = OWNERS_VALIDOS.includes(toolUse.input.owner) ? toolUse.input.owner : ownerPadrao;
+                    const categoriaFinal = resolverCategoria(category, categoriasDaSessao);
+                    if (!categoriasDaSessao.some(c => normalizarCategoria(c) === normalizarCategoria(categoriaFinal))) {
+                        categoriasDaSessao.push(categoriaFinal);
+                    }
+
+                    const agora = new Date();
+                    const gastosParcelados = [];
+                    for (let i = 0; i < installments; i++) {
+                        const dataParcela = new Date(agora.getTime());
+                        dataParcela.setUTCMonth(dataParcela.getUTCMonth() + i);
+                        const referenciaParcela = await calcularReferencia(dataParcela);
+                        gastosParcelados.push({
+                            description: installments > 1 ? `${description} (${i + 1}/${installments})` : description,
+                            value: installmentValue,
+                            owner,
+                            category: categoriaFinal,
+                            date: dataParcela,
+                            origem: 'chat-claude',
+                            ...referenciaParcela,
+                        });
+                    }
+                    const resultParcelado = await individualCollection.insertMany(gastosParcelados);
+
+                    detalhesItens.push({ tipo: 'gasto_parcelado', insertedIds: resultParcelado.insertedIds, gastos: gastosParcelados });
+                    const totalParcelado = (installmentValue * installments).toFixed(2).replace('.', ',');
+                    linhasResposta.push(`✅ *${description}* em ${installments}x de R$ ${installmentValue.toFixed(2).replace('.', ',')} (total R$ ${totalParcelado}, ${categoriaFinal}, ${owner})`);
+                }
             }
-            const resultParcelado = await individualCollection.insertMany(gastosParcelados);
 
-            acao = 'gasto_parcelado';
-            detalhes = { insertedIds: resultParcelado.insertedIds, gastos: gastosParcelados };
-            const totalParcelado = (installmentValue * installments).toFixed(2).replace('.', ',');
-            reply = `✅ Compra parcelada registrada: *${description}* em ${installments}x de R$ ${installmentValue.toFixed(2).replace('.', ',')} (total R$ ${totalParcelado}, ${categoriaFinal}, ${owner}) — um lançamento em cada mês a partir de agora.`;
+            if (gastoToolUses.length === 1) {
+                acao = detalhesItens[0].tipo;
+                detalhes = detalhesItens[0];
+                reply = linhasResposta[0];
+            } else {
+                acao = 'gastos_multiplos';
+                detalhes = { itens: detalhesItens };
+                reply = `✅ ${detalhesItens.length} gastos registrados:\n${linhasResposta.join('\n')}`;
+            }
 
-        } else if (toolUse && toolUse.name === 'consultar_gastos') {
+        } else if (consultaToolUse) {
+            const toolUse = consultaToolUse;
             const periodo = toolUse.input.periodo || 'mes_atual';
             const { start, end } = intervaloDoPeriodo(periodo);
 

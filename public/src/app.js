@@ -1395,7 +1395,7 @@ function renderChatMessage(role, content) {
     const bubble = document.createElement('div');
 
     if (role === 'user') {
-        bubble.className = 'self-end max-w-[80%] bg-blue-600 text-white text-sm px-3 py-2 rounded-2xl rounded-br-sm';
+        bubble.className = 'self-end max-w-[80%] bg-blue-600 text-white text-sm px-3 py-2 rounded-2xl rounded-br-sm whitespace-pre-wrap';
         bubble.textContent = content;
     } else {
         bubble.className = 'self-start max-w-[80%] bg-white border border-gray-200 text-gray-800 text-sm px-3 py-2 rounded-2xl rounded-bl-sm shadow-sm whitespace-pre-wrap';
@@ -1427,6 +1427,25 @@ async function carregarHistoricoChat() {
     }
 }
 
+// Textarea de mensagem: cresce sozinha até um limite, e some quebras de linha voltam ao tamanho inicial.
+const CHAT_INPUT_MAX_HEIGHT = 120; // px
+function ajustarAlturaChatInput() {
+    const input = document.getElementById('chat-input');
+    if (!input) return;
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, CHAT_INPUT_MAX_HEIGHT) + 'px';
+}
+
+document.getElementById('chat-input')?.addEventListener('input', ajustarAlturaChatInput);
+
+// Enter envia a mensagem; Shift+Enter quebra linha (permite formatar a mensagem com vários itens).
+document.getElementById('chat-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        document.getElementById('chat-form')?.requestSubmit();
+    }
+});
+
 document.getElementById('chat-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const input = document.getElementById('chat-input');
@@ -1436,6 +1455,7 @@ document.getElementById('chat-form')?.addEventListener('submit', async (e) => {
 
     renderChatMessage('user', message);
     input.value = '';
+    ajustarAlturaChatInput();
     sendBtn.disabled = true;
 
     const bubbleCarregando = renderChatMessage('assistant', '...');
@@ -1453,7 +1473,7 @@ document.getElementById('chat-form')?.addEventListener('submit', async (e) => {
             atualizarBolhaAssistente(bubbleCarregando, data.error || 'Erro ao processar mensagem.');
         } else {
             atualizarBolhaAssistente(bubbleCarregando, data.reply);
-            if (data.action === 'gasto' || data.action === 'gasto_parcelado') {
+            if (data.action === 'gasto' || data.action === 'gasto_parcelado' || data.action === 'gastos_multiplos') {
                 loadIndividualData();
             }
         }
