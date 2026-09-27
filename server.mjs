@@ -128,6 +128,20 @@ function avancarReferencia(anoBase, mesBase, meses) {
     const mesReferencia = (totalMeses % 12) + 1;
     return { anoReferencia, mesReferencia };
 }
+
+// Decide a data (campo "date") de um lançamento a partir da referência já calculada. Se a
+// referência é o mesmo mês/ano real de hoje, mantém a data/hora exata do lançamento. Se a
+// referência aponta pra outro mês (ex: "vale pro mês seguinte" durante o fechamento da fatura),
+// grava como dia 1 desse mês de referência — pra não aparecer com data de hoje num mês que não é o de hoje.
+function dataParaReferencia(referencia, dataReal) {
+    const hoje = hojeEmSaoPaulo();
+    const referenciaEhMesRealAtual = referencia.anoReferencia === hoje.getUTCFullYear()
+        && referencia.mesReferencia === hoje.getUTCMonth() + 1;
+    if (referenciaEhMesRealAtual) {
+        return dataReal;
+    }
+    return new Date(Date.UTC(referencia.anoReferencia, referencia.mesReferencia - 1, 1));
+}
 // Substitua esta string pela sua URI de conexão do MongoDB
 const MONGO_URI = process.env.MONGO_PUBLIC_URL || "SUA_URI_LOCAL_DE_TESTE";
 
@@ -1101,7 +1115,7 @@ app.post('/api/chat/message', async (req, res) => {
                         value: Math.abs(parseFloat(value)),
                         owner,
                         category: categoriaFinal,
-                        date: dataGasto,
+                        date: dataParaReferencia(referenciaChat, dataGasto),
                         origem: 'chat-claude',
                         ...referenciaChat,
                     };
@@ -1135,7 +1149,7 @@ app.post('/api/chat/message', async (req, res) => {
                             value: installmentValue,
                             owner,
                             category: categoriaFinal,
-                            date: dataParcela,
+                            date: dataParaReferencia(referenciaParcela, dataParcela),
                             origem: 'chat-claude',
                             ...referenciaParcela,
                         });

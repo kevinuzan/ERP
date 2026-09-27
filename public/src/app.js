@@ -779,15 +779,20 @@ function switchTab(tab) {
         btnMain.classList.add(...inactiveClasses);
         btnMain.classList.remove(...activeClasses);
 
-        // Carrega os dados da aba individual
-        if (typeof loadIndividualData === 'function') {
+        // Checa o status da fatura ANTES de carregar os dados: se o modo "próximo mês" estiver
+        // ativo, checarStatusFatura já ajusta o mês sendo exibido antes de buscar os lançamentos —
+        // pra não carregar o mês errado e só depois trocar.
+        if (typeof checarStatusFatura === 'function') {
+            checarStatusFatura().then(() => {
+                if (typeof loadIndividualData === 'function') {
+                    loadIndividualData();
+                }
+            });
+        } else if (typeof loadIndividualData === 'function') {
             loadIndividualData();
         }
         if (typeof initChat === 'function') {
             initChat();
-        }
-        if (typeof checarStatusFatura === 'function') {
-            checarStatusFatura();
         }
     } else {
         // 'main' (Geral) é o padrão
@@ -1253,12 +1258,21 @@ const MESES_NOMES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
 
 const BILLING_DISMISSED_KEY = 'billingBannerDismissedCiclo';
 let ultimoCicloFatura = null; // guardado pra "Não mostrar novamente" saber qual ciclo marcar
+let jaSincronizouMesComOverride = false; // só força a virada de mês uma vez por carregamento da página
 
 async function checarStatusFatura() {
     try {
         const response = await fetch('/api/billing-status');
         const status = await response.json();
         ultimoCicloFatura = status.cicloAtual;
+
+        // Se o modo "próximo mês" já está ativo e ainda não sincronizamos a tela nesta sessão
+        // (ex: acabou de abrir o app/aba com o override já ligado de antes), mostra logo o mês
+        // seguinte — é pra lá que os novos gastos estão contando.
+        if (status.overrideAtivo && !jaSincronizouMesComOverride) {
+            jaSincronizouMesComOverride = true;
+            indCurrentDate = new Date(status.overrideAno, status.overrideMes - 1, 1);
+        }
 
         const banner = document.getElementById('billing-banner');
         const indicator = document.getElementById('billing-indicator');
@@ -1304,11 +1318,12 @@ async function ativarProximoMes() {
             return;
         }
         showNotification(`A partir de agora, novos gastos valem para ${MESES_NOMES[data.overrideMes - 1]}/${data.overrideAno}!`);
-        checarStatusFatura();
 
         // Já muda a visualização pro mês seguinte, já que é pra lá que os novos gastos estão indo
         // (mesma convenção de data local usada em changeIndMonth, pra não sofrer deslocamento de fuso)
+        jaSincronizouMesComOverride = true;
         indCurrentDate = new Date(data.overrideAno, data.overrideMes - 1, 1);
+        checarStatusFatura();
         loadIndividualData();
     } catch (err) {
         console.error('Erro ao ativar modo próximo mês:', err);
