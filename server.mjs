@@ -120,6 +120,14 @@ async function calcularReferencia(dataCompra) {
     }
     return { anoReferencia: dataCompra.getUTCFullYear(), mesReferencia: dataCompra.getUTCMonth() + 1 };
 }
+
+// Soma "meses" a uma referência ano/mês (mesBase 1-indexado), normalizando virada de ano.
+function avancarReferencia(anoBase, mesBase, meses) {
+    const totalMeses = (mesBase - 1) + meses;
+    const anoReferencia = anoBase + Math.floor(totalMeses / 12);
+    const mesReferencia = (totalMeses % 12) + 1;
+    return { anoReferencia, mesReferencia };
+}
 // Substitua esta string pela sua URI de conexão do MongoDB
 const MONGO_URI = process.env.MONGO_PUBLIC_URL || "SUA_URI_LOCAL_DE_TESTE";
 
@@ -1032,11 +1040,22 @@ app.post('/api/chat/message', async (req, res) => {
         return res.status(500).json({ error: "ANTHROPIC_API_KEY não configurada no servidor." });
     }
 
-    const { message, defaultOwner } = req.body;
+    const { message, defaultOwner, refMes, refAno } = req.body;
     if (!message || !message.trim()) {
         return res.status(400).json({ error: "Campo 'message' é obrigatório." });
     }
     const ownerPadrao = OWNERS_VALIDOS.includes(defaultOwner) ? defaultOwner : 'Conjunto';
+
+    // Mês/ano que estão sendo exibidos na tela (enviados pelo front-end). Gastos lançados pelo
+    // chat devem contar pra esse mês — o mesmo mês que o usuário está vendo, seja porque ele
+    // navegou manualmente ou porque ativou "valer para o mês seguinte" (que já muda a tela pra
+    // o próximo mês). Se não vier (ex: cliente antigo em cache), cai de volta na lógica antiga
+    // baseada na data real + estado do fechamento da fatura.
+    const mesRefValido = Number.isInteger(parseInt(refMes)) && parseInt(refMes) >= 1 && parseInt(refMes) <= 12;
+    const anoRefValido = Number.isInteger(parseInt(refAno)) && parseInt(refAno) > 2000;
+    const referenciaVigente = (mesRefValido && anoRefValido)
+        ? { anoReferencia: parseInt(refAno), mesReferencia: parseInt(refMes) }
+        : null;
 
     try {
         await chatCollection.insertOne({ role: 'user', content: message, owner: ownerPadrao, date: new Date() });
@@ -1076,7 +1095,7 @@ app.post('/api/chat/message', async (req, res) => {
                     }
 
                     const dataGasto = new Date();
-                    const referenciaChat = await calcularReferencia(dataGasto);
+                    const referenciaChat = referenciaVigente || await calcularReferencia(dataGasto);
                     const gasto = {
                         description,
                         value: Math.abs(parseFloat(value)),
@@ -1106,7 +1125,11 @@ app.post('/api/chat/message', async (req, res) => {
                     for (let i = 0; i < installments; i++) {
                         const dataParcela = new Date(agora.getTime());
                         dataParcela.setUTCMonth(dataParcela.getUTCMonth() + i);
-                        const referenciaParcela = await calcularReferencia(dataParcela);
+                        // A 1ª parcela conta pro mês vigente (igual a um gasto à vista); as seguintes
+                        // avançam mês a mês a partir dali — sempre baseado no mês vigente, não na data real.
+                        const referenciaParcela = referenciaVigente
+                            ? avancarReferencia(referenciaVigente.anoReferencia, referenciaVigente.mesReferencia, i)
+                            : await calcularReferencia(dataParcela);
                         gastosParcelados.push({
                             description: installments > 1 ? `${description} (${i + 1}/${installments})` : description,
                             value: installmentValue,

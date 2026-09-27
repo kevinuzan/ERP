@@ -1462,10 +1462,14 @@ document.getElementById('chat-form')?.addEventListener('submit', async (e) => {
 
     try {
         const owner = localStorage.getItem(CHAT_OWNER_KEY) || 'Conjunto';
+        // Manda o mês/ano que estão sendo exibidos na tela agora — é pra esse mês que os gastos
+        // lançados pelo chat devem contar (o mesmo mês visível na aba Individual).
+        const refMes = indCurrentDate.getMonth() + 1;
+        const refAno = indCurrentDate.getFullYear();
         const response = await fetch('/api/chat/message', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message, defaultOwner: owner }),
+            body: JSON.stringify({ message, defaultOwner: owner, refMes, refAno }),
         });
         const data = await response.json();
 
