@@ -287,8 +287,8 @@ function openEditInd(id) {
     // NOVO: Preencher a categoria no modal
     document.getElementById('edit-ind-category').value = item.category || "Outros";
 
-    // Ajusta a data
-    const dateObj = new Date(item.date);
+    // Ajusta a data (usa a data real da compra quando existir, não o dia 1 de referência)
+    const dateObj = new Date(item.dataCompra || item.date);
     document.getElementById('ind-date').value = dateObj.toISOString().split('T')[0];
 
     document.getElementById('edit-ind-date').value = dateObj.toISOString().split('T')[0];
@@ -1016,7 +1016,9 @@ function renderIndividualTable() {
 
     // 4. Preencher o Extrato Detalhado (Tabela de baixo)
     filtered.forEach(item => {
-        const dateStr = new Date(item.date).toLocaleDateString('pt-BR', { timeZone: 'UTC' });
+        // Mostra a data REAL da compra quando existir (ex: lançado pelo chat com "vale pro mês
+        // seguinte" — o mês/tabela é o de referência, mas a data exibida é o dia que você comprou de fato).
+        const dateStr = new Date(item.dataCompra || item.date).toLocaleDateString('pt-BR', { timeZone: 'UTC' });
         tbody.innerHTML += `
             <tr class="border-b hover:bg-gray-50">
                 <td class="p-4 text-gray-500 text-sm">${dateStr}</td>

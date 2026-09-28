@@ -515,6 +515,7 @@ app.put('/api/individual/:id', async (req, res) => {
                     value: parseFloat(value),
                     owner,
                     date: dataCompra,
+                    dataCompra, // edição manual: a data escolhida passa a ser a data real também
                     category,
                     anoReferencia: dataCompra.getUTCFullYear(),
                     mesReferencia: dataCompra.getUTCMonth() + 1,
@@ -1116,6 +1117,7 @@ app.post('/api/chat/message', async (req, res) => {
                         owner,
                         category: categoriaFinal,
                         date: dataParaReferencia(referenciaChat, dataGasto),
+                        dataCompra: dataGasto, // dia real em que o gasto aconteceu, pro extrato mostrar certinho
                         origem: 'chat-claude',
                         ...referenciaChat,
                     };
@@ -1150,6 +1152,7 @@ app.post('/api/chat/message', async (req, res) => {
                             owner,
                             category: categoriaFinal,
                             date: dataParaReferencia(referenciaParcela, dataParcela),
+                            dataCompra: agora, // a compra parcelada real aconteceu uma vez só, nesta data — igual em todas as parcelas
                             origem: 'chat-claude',
                             ...referenciaParcela,
                         });
@@ -1194,7 +1197,7 @@ app.post('/api/chat/message', async (req, res) => {
                 system: `Você é um assistente financeiro. Responda a pergunta do usuário de forma direta, curta (poucas frases) e em português, com base EXCLUSIVAMENTE nos dados abaixo. Se não houver dados suficientes, diga isso.
 Dados do período "${periodo}" (${gastos.length} lançamentos, total R$ ${total.toFixed(2)}):
 Resumo por categoria: ${JSON.stringify(resumoPorCategoria)}
-Lançamentos individuais: ${JSON.stringify(gastos.map(g => ({ descricao: g.description, valor: g.value, categoria: g.category, dono: g.owner, data: g.date })))}`,
+Lançamentos individuais: ${JSON.stringify(gastos.map(g => ({ descricao: g.description, valor: g.value, categoria: g.category, dono: g.owner, data: g.dataCompra || g.date })))}`,
                 messages: [{ role: 'user', content: message }],
             });
 
