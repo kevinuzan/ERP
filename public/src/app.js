@@ -1873,8 +1873,16 @@ function toggleFormVisibility() {
 }
 
 
+// Cobre o caso do iOS restaurar a página do cache (voltar/reabrir o app) já rolada pra baixo.
+window.addEventListener('pageshow', () => {
+    window.scrollTo(0, 0);
+});
+
 // --- INICIALIZAÇÃO ---
 document.addEventListener('DOMContentLoaded', () => {
+    // Garante que a página sempre começa rolada pro topo (menu Geral/Individual visível),
+    // mesmo se o navegador tentar restaurar uma posição de scroll antiga.
+    window.scrollTo(0, 0);
     switchTab('main');
     loadConsorciosList();
     // Garante que a data de exibição começa no dia 1
