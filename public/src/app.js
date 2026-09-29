@@ -11,6 +11,8 @@ const COTACAO_FIXA = 5.45;
 const DISNEY_API_URL = `${API_BASE_URL}/disney`;
 let currentDisplayDate = new Date();
 let expenseChart = null; // Instância global para o gráfico Chart.js
+let ultimasTransacoesGeral = []; // cache da última lista buscada, pra filtrar sem precisar refazer o fetch
+let filtroCategoriaGeral = null; // categoria selecionada ao clicar numa fatia do gráfico (aba Geral)
 
 // --- FUNÇÕES DE UTILIDADE E UI ---
 
@@ -101,6 +103,14 @@ function renderPieChart(breakdownData) {
         },
         options: {
             responsive: true,
+            onClick: (evt, elements) => {
+                if (elements.length > 0) {
+                    filtrarPorCategoriaGeral(breakdownData[elements[0].index].category);
+                }
+            },
+            onHover: (evt, elements) => {
+                evt.native.target.style.cursor = elements.length > 0 ? 'pointer' : 'default';
+            },
             plugins: {
                 legend: { position: 'top' },
                 tooltip: {
@@ -117,6 +127,36 @@ function renderPieChart(breakdownData) {
             }
         }
     });
+}
+
+// Clicar numa fatia do gráfico da aba Geral filtra o extrato abaixo por essa categoria.
+// Clicar de novo na mesma categoria (ou no aviso do filtro) limpa o filtro.
+function filtrarPorCategoriaGeral(categoria) {
+    filtroCategoriaGeral = (filtroCategoriaGeral === categoria) ? null : categoria;
+    aplicarFiltroTransacoesGeral();
+}
+
+function limparFiltroCategoriaGeral() {
+    filtroCategoriaGeral = null;
+    aplicarFiltroTransacoesGeral();
+}
+
+function aplicarFiltroTransacoesGeral() {
+    const lista = filtroCategoriaGeral
+        ? ultimasTransacoesGeral.filter(t => (t.category || 'Outros') === filtroCategoriaGeral)
+        : ultimasTransacoesGeral;
+    renderTransactionList(lista, !filtroCategoriaGeral);
+
+    const aviso = document.getElementById('filtro-categoria-geral-aviso');
+    if (aviso) {
+        if (filtroCategoriaGeral) {
+            document.getElementById('filtro-categoria-geral-texto').textContent =
+                `Filtrando por: ${filtroCategoriaGeral}`;
+            aviso.classList.remove('hidden');
+        } else {
+            aviso.classList.add('hidden');
+        }
+    }
 }
 
 /**
@@ -791,9 +831,6 @@ function switchTab(tab) {
         } else if (typeof loadIndividualData === 'function') {
             loadIndividualData();
         }
-        if (typeof initChat === 'function') {
-            initChat();
-        }
     } else {
         // 'main' (Geral) é o padrão
         mainTab.classList.remove('hidden');
@@ -889,6 +926,15 @@ function setOwnerFilter(owner) {
     loadIndividualData();
 }
 
+// Clicar numa fatia do gráfico da aba Individual filtra a tabela abaixo por essa categoria.
+// Clicar de novo na mesma fatia limpa o filtro (volta pra "Todas").
+function filtrarPorCategoriaIndividual(categoria) {
+    const select = document.getElementById('filter-category');
+    if (!select) return;
+    select.value = (select.value === categoria) ? 'Todas' : categoria;
+    renderIndividualTable();
+}
+
 function renderIndividualPieChart(data) {
     const chartContainer = document.getElementById('individualChartContainer');
     chartContainer.innerHTML = '<canvas id="individual-chart-canvas"></canvas>';
@@ -930,6 +976,14 @@ function renderIndividualPieChart(data) {
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            onClick: (evt, elements) => {
+                if (elements.length > 0) {
+                    filtrarPorCategoriaIndividual(breakdownData[elements[0].index].category);
+                }
+            },
+            onHover: (evt, elements) => {
+                evt.native.target.style.cursor = elements.length > 0 ? 'pointer' : 'default';
+            },
             plugins: {
                 legend: { position: 'top' },
                 tooltip: {
@@ -1339,6 +1393,28 @@ async function ativarProximoMes() {
 const CHAT_OWNER_KEY = 'chatOwner';
 let chatHistoryCarregado = false;
 
+// Abre/fecha o painel flutuante do chat (ícone 💬 fixo no canto da tela, disponível nas duas abas).
+function toggleChatPanel() {
+    const panel = document.getElementById('chat-panel');
+    const fab = document.getElementById('chat-fab');
+    if (!panel || !fab) return;
+
+    const vaiAbrir = panel.classList.contains('hidden');
+    if (vaiAbrir) {
+        panel.classList.remove('hidden');
+        fab.classList.add('hidden');
+        initChat();
+    } else {
+        panel.classList.add('hidden');
+        fab.classList.remove('hidden');
+        // Fechar o painel também sai do modo tela cheia, se estava ativo
+        const card = document.getElementById('chat-card');
+        if (card && card.classList.contains('chat-fullscreen')) {
+            toggleChatFullscreen();
+        }
+    }
+}
+
 function initChat() {
     const owner = localStorage.getItem(CHAT_OWNER_KEY);
     const picker = document.getElementById('chat-picker-owner');
@@ -1510,7 +1586,9 @@ document.getElementById('chat-form')?.addEventListener('submit', async (e) => {
 /**
  * Renderiza a lista detalhada de transações.
  */
-function renderTransactionList(transactions) {
+// "mostrarSaldo" desliga o saldo acumulado quando a lista está filtrada por categoria — o saldo
+// corrido só faz sentido considerando TODAS as transações do mês, não um subconjunto filtrado.
+function renderTransactionList(transactions, mostrarSaldo = true) {
     const tbody = document.querySelector('#transaction-list-table tbody');
     tbody.innerHTML = '';
 
@@ -1551,10 +1629,15 @@ function renderTransactionList(transactions) {
 
         // SALDO DO DIA (Coluna 5)
         const saldoCell = row.insertCell(5);
-        saldoCell.textContent = formatCurrency(saldoAcumulado);
-        saldoCell.classList.add('text-right', 'font-bold');
-        // Azul para positivo, Laranja para negativo
-        saldoCell.classList.add(saldoAcumulado >= 0 ? 'text-blue-600' : 'text-orange-600');
+        if (mostrarSaldo) {
+            saldoCell.textContent = formatCurrency(saldoAcumulado);
+            saldoCell.classList.add('text-right', 'font-bold');
+            // Azul para positivo, Laranja para negativo
+            saldoCell.classList.add(saldoAcumulado >= 0 ? 'text-blue-600' : 'text-orange-600');
+        } else {
+            saldoCell.textContent = '—';
+            saldoCell.classList.add('text-right', 'text-gray-400');
+        }
 
         row.insertCell(6).textContent = recurrentIcon;
 
@@ -1734,7 +1817,8 @@ async function fetchAndRenderTransactionList(year, month) {
             throw new Error(`Erro HTTP: ${response.status}`);
         }
         const data = await response.json();
-        renderTransactionList(data.transactions);
+        ultimasTransacoesGeral = data.transactions;
+        aplicarFiltroTransacoesGeral();
     } catch (error) {
         console.error('Erro ao carregar lista de transações:', error);
         tbody.innerHTML = `<tr><td colspan="7" class="text-center text-red-500 py-4">Erro ao buscar dados: ${error.message}</td></tr>`;
@@ -1837,6 +1921,9 @@ function loadCurrentMonthData() {
     const year = currentDisplayDate.getFullYear();
     const month = currentDisplayDate.getMonth() + 1; // getMonth é zero-based
 
+    // Trocar de mês limpa o filtro de categoria (senão fica confuso continuar filtrado sem saber)
+    filtroCategoriaGeral = null;
+
     // 1. Atualiza o display
     updateMonthDisplay(year, month);
 
@@ -1884,7 +1971,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // mesmo se o navegador tentar restaurar uma posição de scroll antiga.
     window.scrollTo(0, 0);
     switchTab('main');
-    loadConsorciosList();
+    // A aba "Consórcio" foi removida da interface — não faz mais sentido buscar essa lista
+    // (loadConsorciosList) em todo carregamento do app; isso só gerava tráfego à toa.
     // Garante que a data de exibição começa no dia 1
     currentDisplayDate.setDate(1);
 

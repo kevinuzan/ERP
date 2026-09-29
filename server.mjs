@@ -143,7 +143,10 @@ function dataParaReferencia(referencia, dataReal) {
     return new Date(Date.UTC(referencia.anoReferencia, referencia.mesReferencia - 1, 1));
 }
 // Substitua esta string pela sua URI de conexão do MongoDB
-const MONGO_URI = process.env.MONGO_PUBLIC_URL || "SUA_URI_LOCAL_DE_TESTE";
+// IMPORTANTE: prioriza MONGO_URL (rede PRIVADA do Railway, entre serviços do mesmo projeto —
+// não conta como Network Egress) e só cai pra MONGO_PUBLIC_URL (rede pública, conta egress) se a
+// privada não estiver disponível (ex: rodando local ou Mongo em outro provedor).
+const MONGO_URI = process.env.MONGO_URL || process.env.MONGO_PUBLIC_URL || "SUA_URI_LOCAL_DE_TESTE";
 
 // --- MIDDLEWARES ---
 app.use(cors());
@@ -172,9 +175,7 @@ let pushSubscriptions = [];
 app.post('/api/subscribe', async (req, res) => {
     const subscription = req.body;
     try {
-        const client = new MongoClient(MONGO_URI);
-        const db = client.db(DB_NAME);
-        const subsCollection = db.collection('subscriptions');
+        const subsCollection = sharedDb.collection('subscriptions');
 
         // Evita duplicados (usa o endpoint como ID único)
         await subsCollection.updateOne(
@@ -191,10 +192,8 @@ app.post('/api/subscribe', async (req, res) => {
 
 async function verificarVencimentos() {
     try {
-        const client = new MongoClient(MONGO_URI);
-        const db = client.db(DB_NAME);
-        const transactionsColl = db.collection('transactions');
-        const subsCollection = db.collection('subscriptions');
+        const transactionsColl = sharedDb.collection('transactions');
+        const subsCollection = sharedDb.collection('subscriptions');
 
         // Pega a data de HOJE (zerando horas para comparar apenas o dia)
         const hoje = new Date();
@@ -268,9 +267,7 @@ app.get('/api/send-notif', (req, res) => {
 });
 app.get('/api/test-push', async (req, res) => {
     try {
-        const client = new MongoClient(MONGO_URI);
-        const db = client.db(DB_NAME);
-        const subsCollection = db.collection('subscriptions');
+        const subsCollection = sharedDb.collection('subscriptions');
 
         // 1. Pega todas as assinaturas guardadas no banco
         const allSubs = await subsCollection.find().toArray();
@@ -301,7 +298,13 @@ app.get('/api/test-push', async (req, res) => {
 });
 
 // --- CONEXÃO PERSISTENTE COM O MONGODB ---
+// Uma única conexão (com seu próprio pool interno) reutilizada por TODA a aplicação. Abrir um
+// "new MongoClient(...)" novo a cada requisição (como algumas rotas antigas faziam, e nunca
+// fechavam) deixa conexões penduradas pra sempre, cada uma mandando heartbeats periódicos —
+// isso, somado a usar a URL pública em vez da rede privada do Railway, é a explicação mais provável
+// pro alto consumo de Network Egress.
 let transactionsCollection;
+let sharedDb;
 
 async function connectDB() {
     try {
@@ -309,6 +312,7 @@ async function connectDB() {
         console.log(`URI de Conexão: ${MONGO_URI.substring(0, 30)}...`); // Log da URI truncada
         await client.connect();
         const db = client.db(DB_NAME);
+        sharedDb = db;
         transactionsCollection = db.collection(COLLECTION_NAME);
         individualCollection = db.collection("individual_expenses"); // Nova coleção
         disneyCollection = db.collection("disney_expenses");
@@ -657,9 +661,7 @@ app.delete('/api/individual/:id', async (req, res) => {
 // Salvar ou Atualizar
 app.post('/api/consorcios', async (req, res) => {
     try {
-        const client = new MongoClient(MONGO_URI);
-        const db = client.db(DB_NAME);
-        const col = db.collection('consorcios');
+        const col = sharedDb.collection('consorcios');
         const data = req.body;
         if (data._id) {
             // Se tem ID, é uma edição
@@ -678,16 +680,12 @@ app.post('/api/consorcios', async (req, res) => {
 });
 
 app.get('/api/consorcios', async (req, res) => {
-    const client = new MongoClient(MONGO_URI);
-    const db = client.db(DB_NAME);
-    const lista = await db.collection('consorcios').find().toArray();
+    const lista = await sharedDb.collection('consorcios').find().toArray();
     res.json(lista);
 });
 
 app.delete('/api/consorcios/:id', async (req, res) => {
-    const client = new MongoClient(MONGO_URI);
-    const db = client.db(DB_NAME);
-    await db.collection('consorcios').deleteOne({ _id: new ObjectId(req.params.id) });
+    await sharedDb.collection('consorcios').deleteOne({ _id: new ObjectId(req.params.id) });
     res.json({ message: "Removido" });
 });
 
@@ -983,33 +981,37 @@ const CHAT_TOOLS = [
     },
 ];
 
-function intervaloDoPeriodo(periodo) {
+// "referenciaVigente" é o mês/ano que está sendo EXIBIDO na tela (o mesmo usado pra registrar
+// gastos novos — ver referenciaVigente no handler do chat). "mes_atual"/"mes_anterior" usam essa
+// referência como base, em vez da data real do servidor, pra bater com o que a tabela mostra —
+// senão, com o modo "próximo mês" ativo, o chat dizia "sem gastos esse mês" mesmo com lançamentos.
+function intervaloDoPeriodo(periodo, referenciaVigente) {
     const agora = new Date();
-    const anoAtual = agora.getUTCFullYear();
-    const mesAtual = agora.getUTCMonth(); // 0-indexado
+    const anoBase = referenciaVigente ? referenciaVigente.anoReferencia : agora.getUTCFullYear();
+    const mesBase = referenciaVigente ? referenciaVigente.mesReferencia - 1 : agora.getUTCMonth(); // 0-indexado
 
     switch (periodo) {
         case 'mes_anterior': {
-            const start = new Date(Date.UTC(anoAtual, mesAtual - 1, 1));
-            const end = new Date(Date.UTC(anoAtual, mesAtual, 1));
+            const start = new Date(Date.UTC(anoBase, mesBase - 1, 1));
+            const end = new Date(Date.UTC(anoBase, mesBase, 1));
             return { start, end };
         }
         case 'ultimos_30_dias': {
-            const end = new Date(Date.UTC(anoAtual, mesAtual, agora.getUTCDate() + 1));
+            const end = new Date(Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth(), agora.getUTCDate() + 1));
             const start = new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
             return { start, end };
         }
         case 'ano_atual': {
-            const start = new Date(Date.UTC(anoAtual, 0, 1));
-            const end = new Date(Date.UTC(anoAtual + 1, 0, 1));
+            const start = new Date(Date.UTC(anoBase, 0, 1));
+            const end = new Date(Date.UTC(anoBase + 1, 0, 1));
             return { start, end };
         }
         case 'tudo':
-            return { start: new Date(Date.UTC(2000, 0, 1)), end: new Date(Date.UTC(anoAtual + 1, 0, 1)) };
+            return { start: new Date(Date.UTC(2000, 0, 1)), end: new Date(Date.UTC(anoBase + 1, 0, 1)) };
         case 'mes_atual':
         default: {
-            const start = new Date(Date.UTC(anoAtual, mesAtual, 1));
-            const end = new Date(Date.UTC(anoAtual, mesAtual + 1, 1));
+            const start = new Date(Date.UTC(anoBase, mesBase, 1));
+            const end = new Date(Date.UTC(anoBase, mesBase + 1, 1));
             return { start, end };
         }
     }
@@ -1180,7 +1182,7 @@ app.post('/api/chat/message', async (req, res) => {
         } else if (consultaToolUse) {
             const toolUse = consultaToolUse;
             const periodo = toolUse.input.periodo || 'mes_atual';
-            const { start, end } = intervaloDoPeriodo(periodo);
+            const { start, end } = intervaloDoPeriodo(periodo, referenciaVigente);
 
             const gastos = await individualCollection.find(
                 filtroPorPeriodo(periodo, start, end)
