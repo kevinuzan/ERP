@@ -1321,15 +1321,13 @@ app.put('/api/transactions/:id', async (req, res) => {
             }
 
         } else {
-            // Se isRecurrent se tornou FALSE, o item é tratado como transação única.
+            // Se isRecurrent se tornou FALSE: o usuário está editando só ESTE lançamento (ex:
+            // "esse mês meu salário veio mais alto"), não mexendo na recorrência em si. Desvincula
+            // só este documento da série (vira um lançamento avulso daqui pra frente) SEM apagar
+            // os meses futuros que já existiam — antes isso deletava tudo que vinha depois, que é
+            // exatamente o comportamento que não queremos. Pra realmente encerrar/alterar a série a
+            // partir de um mês, o jeito é marcar "recorrente" na edição (ver o bloco acima).
             if (oldTransaction.isRecurrent) {
-                const rootId = oldTransaction.replicatedFromId || oldTransaction._id;
-                // Deletamos todas as réplicas futuras.
-                await transactionsCollection.deleteMany({
-                    replicatedFromId: rootId,
-                    date: { $gte: utcDate }
-                });
-                // Removemos o status de ROOT do item editado, se aplicável
                 unsetFields.replicatedFromId = "";
                 unsetFields.isSuperseded = "";
                 delete updatedFields.replicatedFromId;
