@@ -558,6 +558,7 @@
                         </select>
                     </div>
                 </div>
+                <p class="text-xs text-gray-400 -mt-2 mb-3">Dica: clique numa fatia do gráfico abaixo pra filtrar o extrato por categoria.</p>
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div id="individualChartContainer" class="w-full h-80 flex items-center justify-center">
@@ -587,8 +588,13 @@
 
         <div class="max-w mx-auto px-4">
             <div class="card-elevate bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden">
-                <div class="p-4 bg-gray-50 border-b border-gray-100">
+                <div class="p-4 bg-gray-50 border-b border-gray-100 flex items-center justify-between gap-3 flex-wrap">
                     <h3 class="font-bold text-gray-700">🧾 Extrato Detalhado</h3>
+                    <button id="filtro-categoria-ind-aviso" onclick="limparFiltroCategoriaIndividual()"
+                        class="hidden inline-flex items-center gap-2 bg-blue-50 text-blue-700 text-xs font-bold px-3 py-1.5 rounded-full hover:bg-blue-100">
+                        <span id="filtro-categoria-ind-texto"></span>
+                        <span>✕</span>
+                    </button>
                 </div>
 
                 <div class="overflow-x-auto">

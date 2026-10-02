@@ -340,6 +340,8 @@ initPush().catch(err => console.error(err));
 let indCurrentDate = new Date();
 indCurrentDate.setDate(1);
 let indDataCache = [];
+let indFilteredCache = []; // dados já filtrados por Dono/Categoria (os selects), antes do clique no gráfico
+let filtroCategoriaIndClique = null; // categoria selecionada ao clicar numa fatia do gráfico (aba Individual) — assim como na aba Geral, isso filtra só o extrato de baixo, sem mexer no gráfico/tabela de categorias
 
 // Abrir Modal e preencher os dados atuais
 function openEditInd(id) {
@@ -985,13 +987,35 @@ function setOwnerFilter(owner) {
     loadIndividualData();
 }
 
-// Clicar numa fatia do gráfico da aba Individual filtra a tabela abaixo por essa categoria.
-// Clicar de novo na mesma fatia limpa o filtro (volta pra "Todas").
+// Clicar numa fatia do gráfico da aba Individual filtra só o Extrato Detalhado (tabela de baixo),
+// igual já funcionava na aba Geral — o gráfico e a tabela de categorias ao lado continuam mostrando
+// tudo, sem encolher pra uma fatia só. Clicar de novo na mesma fatia limpa o filtro.
 function filtrarPorCategoriaIndividual(categoria) {
-    const select = document.getElementById('filter-category');
-    if (!select) return;
-    select.value = (select.value === categoria) ? 'Todas' : categoria;
-    renderIndividualTable();
+    filtroCategoriaIndClique = (filtroCategoriaIndClique === categoria) ? null : categoria;
+    aplicarFiltroExtratoIndividual();
+}
+
+function limparFiltroCategoriaIndividual() {
+    filtroCategoriaIndClique = null;
+    aplicarFiltroExtratoIndividual();
+}
+
+function aplicarFiltroExtratoIndividual() {
+    const lista = filtroCategoriaIndClique
+        ? indFilteredCache.filter(item => (item.category || 'Outros') === filtroCategoriaIndClique)
+        : indFilteredCache;
+    renderIndividualExtrato(lista);
+
+    const aviso = document.getElementById('filtro-categoria-ind-aviso');
+    if (aviso) {
+        if (filtroCategoriaIndClique) {
+            document.getElementById('filtro-categoria-ind-texto').textContent =
+                `Filtrando por: ${filtroCategoriaIndClique}`;
+            aviso.classList.remove('hidden');
+        } else {
+            aviso.classList.add('hidden');
+        }
+    }
 }
 
 function renderIndividualPieChart(data) {
@@ -1103,10 +1127,7 @@ function renderIndividualTable() {
     const filterOwner = document.getElementById('filter-owner').value;
     const filterCategory = document.getElementById('filter-category').value;
 
-    const tbody = document.getElementById('individual-table-body');
     const personCardsContainer = document.getElementById('individual-cards');
-
-    tbody.innerHTML = '';
 
     // 1. Calcular Totais por Pessoa (Sempre do mês inteiro, independente do filtro)
     const personTotals = { Any: 0, Kevin: 0, Conjunto: 0 };
@@ -1131,19 +1152,36 @@ function renderIndividualTable() {
         </div>
     `;
 
-    // 3. Filtrar dados para o gráfico e extrato (combinando Dono e Categoria)
+    // 3. Filtrar dados para o gráfico e extrato (combinando Dono e Categoria — os dois selects)
     const filtered = indDataCache.filter(item => {
         const matchOwner = filterOwner === 'Todos' || item.owner === filterOwner;
         const matchCategory = filterCategory === 'Todas' || (item.category && item.category === filterCategory) || (!item.category && filterCategory === 'Outros');
 
         return matchOwner && matchCategory;
     });
+    indFilteredCache = filtered;
+    // Toda vez que os dados mudam (mês, selects), o filtro de CLIQUE no gráfico reseta — senão
+    // ficaria preso numa categoria antiga sem o usuário saber por quê.
+    filtroCategoriaIndClique = null;
 
-    // Atualiza Gráfico e Tabela de Categoria Lateral
+    // Atualiza Gráfico e Tabela de Categoria Lateral (sempre com TODOS os dados filtrados pelos
+    // selects — clicar numa fatia não deve encolher o gráfico, só o extrato abaixo dele)
     renderIndividualPieChart(filtered);
 
     // 4. Preencher o Extrato Detalhado (Tabela de baixo)
-    filtered.forEach(item => {
+    aplicarFiltroExtratoIndividual();
+}
+
+function renderIndividualExtrato(lista) {
+    const tbody = document.getElementById('individual-table-body');
+    tbody.innerHTML = '';
+
+    if (lista.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center py-4 text-gray-500">Nenhum gasto encontrado.</td></tr>';
+        return;
+    }
+
+    lista.forEach(item => {
         // Mostra a data REAL da compra quando existir (ex: lançado pelo chat com "vale pro mês
         // seguinte" — o mês/tabela é o de referência, mas a data exibida é o dia que você comprou de fato).
         const dateStr = new Date(item.dataCompra || item.date).toLocaleDateString('pt-BR', { timeZone: 'UTC' });
