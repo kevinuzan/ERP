@@ -204,15 +204,15 @@ function renderSummary(summaryData, saldo) {
     const container = document.getElementById('summary-container');
     container.innerHTML = `
         <div class="summary-card bg-green-100 text-green-800 border-green-300">
-            <h3 class="text-sm font-medium">Entradas (Receita)</h3>
+            <h3 class="text-sm font-medium">📈 Entradas (Receita)</h3>
             <p class="text-xl font-bold">${formatCurrency(totalIncome)}</p>
         </div>
         <div class="summary-card bg-red-100 text-red-800 border-red-300">
-            <h3 class="text-sm font-medium">Gastos (Despesa)</h3>
+            <h3 class="text-sm font-medium">📉 Gastos (Despesa)</h3>
             <p class="text-xl font-bold">${formatCurrency(totalExpense)}</p>
         </div>
         <div class="summary-card bg-blue-100 text-gray-800 border-blue-300">
-            <h3 class="text-sm font-medium">Sobra / Déficit</h3>
+            <h3 class="text-sm font-medium">⚖️ Sobra / Déficit</h3>
             <p class="text-xl font-bold ${saldo >= 0 ? 'text-green-600' : 'text-red-600'}">${formatCurrency(saldo)}</p>
         </div>
     `;
@@ -905,6 +905,23 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
+/* ==========================================================
+   NAVEGAÇÃO DE MÊS FIXA (sticky), logo abaixo do menu Geral/Individual
+   ========================================================== */
+// A altura do #top-nav muda conforme o aparelho (notch do iPhone, rotação de tela), então em vez
+// de um valor fixo no CSS, medimos a altura real e guardamos numa variável CSS (--topnav-h) que o
+// #month-nav-main/#month-nav-ind usam como "top" do sticky.
+function ajustarOffsetMesFixo() {
+    const topNav = document.getElementById('top-nav');
+    if (!topNav) return;
+    document.documentElement.style.setProperty('--topnav-h', `${topNav.getBoundingClientRect().height}px`);
+}
+
+window.addEventListener('load', ajustarOffsetMesFixo);
+window.addEventListener('resize', ajustarOffsetMesFixo);
+window.addEventListener('orientationchange', ajustarOffsetMesFixo);
+document.addEventListener('DOMContentLoaded', ajustarOffsetMesFixo);
+
 async function loadIndividualData() {
     const month = indCurrentDate.getMonth();
     const year = indCurrentDate.getFullYear();
@@ -1100,9 +1117,10 @@ function renderIndividualTable() {
     });
 
     // 2. Renderizar os Cards de Pessoa (Any, Kevin, Conjunto)
+    const iconesPorPessoa = { Any: '👩', Kevin: '🧑', Conjunto: '🤝' };
     personCardsContainer.innerHTML = Object.entries(personTotals).map(([name, total]) => `
         <div class="summary-card bg-white border-blue-200">
-            <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider">${name}</h3>
+            <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider">${iconesPorPessoa[name] || '👤'} ${name}</h3>
             <p class="text-xl font-black text-blue-600">${formatCurrency(total)}</p>
         </div>
     `).join('');

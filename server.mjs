@@ -1070,7 +1070,35 @@ Quando a mensagem for uma pergunta ou pedido de resumo/relatório sobre os gasto
 Se a mensagem contiver VÁRIOS gastos (por exemplo, uma lista com um item por linha, cada um com sua própria descrição e valor, como "- refrigerante: R$ 12,73"), chame a ferramenta registrar_gasto (ou registrar_gasto_parcelado, se for o caso) UMA VEZ PARA CADA item da lista, todas as chamadas na mesma resposta — nunca registre só o primeiro item e ignore o resto.
 
 MUITO IMPORTANTE — seja decisivo, nunca pergunte de volta: sempre que a mensagem tiver uma descrição curta e um valor (ex: "Presente 150", "Farmácia 45", "Netflix 39,90"), chame registrar_gasto IMEDIATAMENTE, sem pedir mais detalhes. Nunca responda com perguntas do tipo "pra quem foi o presente?", "isso é de qual categoria?" ou "confirma o valor?" — assuma o que for razoável e registre. Um número sozinho depois de uma palavra (ex: "150") é sempre o valor em reais (150 = R$ 150,00, nunca R$ 1,50). Escolha a categoria que fizer mais sentido pelo bom senso; se REALMENTE não der pra decidir uma categoria (nem uma nova faz sentido), use "Outros" — nunca deixe de registrar o gasto por causa da categoria.
-Se a mensagem não for nenhuma dessas coisas (ex: um cumprimento), responda normalmente em texto, de forma breve.`;
+Se a mensagem não for nenhuma dessas coisas (ex: um cumprimento), responda normalmente em texto, de forma breve.
+Você recebe junto com esta mensagem as últimas trocas da conversa (histórico) — use isso pra entender referências como "isso", "aquele gasto", "o mesmo de antes" ou uma pergunta de acompanhamento, em vez de tratar cada mensagem como se fosse a primeira.`;
+}
+
+// Quantas mensagens recentes (user+assistant somadas) mandar junto como contexto pro Claude —
+// antes disso a IA tratava CADA mensagem isolada, sem lembrar nada da conversa (ex: se o usuário
+// mandasse "foi 50" depois de "Presente", a IA não tinha como saber que "50" era o valor do presente).
+const HISTORICO_CHAT_LIMITE = 12;
+
+/**
+ * Converte os últimos documentos do chatCollection (role 'user'/'assistant', já em ordem
+ * cronológica) pro formato de mensagens da API da Anthropic. A API exige que os papéis alternem
+ * e que a primeira mensagem seja sempre 'user' — então mensagens seguidas do mesmo papel (o que
+ * não deveria acontecer no fluxo normal, mas pode em casos de erro) são fundidas em uma só.
+ */
+function montarHistoricoChat(mensagens) {
+    const resultado = [];
+    for (const m of mensagens) {
+        const role = m.role === 'assistant' ? 'assistant' : 'user';
+        const texto = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+        if (!texto) continue;
+        if (resultado.length > 0 && resultado[resultado.length - 1].role === role) {
+            resultado[resultado.length - 1].content += '\n' + texto;
+        } else {
+            resultado.push({ role, content: texto });
+        }
+    }
+    if (resultado.length && resultado[0].role !== 'user') resultado.shift();
+    return resultado;
 }
 
 app.post('/api/chat/message', async (req, res) => {
@@ -1099,16 +1127,28 @@ app.post('/api/chat/message', async (req, res) => {
         : null;
 
     try {
+        // Busca o histórico recente ANTES de inserir a mensagem atual (senão ela apareceria duplicada).
+        const mensagensRecentes = await chatCollection.find({}).sort({ date: -1 }).limit(HISTORICO_CHAT_LIMITE).toArray();
+        const historicoClaude = montarHistoricoChat(mensagensRecentes.reverse());
+
         await chatCollection.insertOne({ role: 'user', content: message, owner: ownerPadrao, date: new Date() });
 
         const categoriasExistentes = await listarCategorias();
+
+        const mensagensParaClaude = [...historicoClaude];
+        if (mensagensParaClaude.length && mensagensParaClaude[mensagensParaClaude.length - 1].role === 'user') {
+            // Duas mensagens 'user' seguidas não são permitidas pela API — gruda a atual na anterior.
+            mensagensParaClaude[mensagensParaClaude.length - 1].content += '\n' + message;
+        } else {
+            mensagensParaClaude.push({ role: 'user', content: message });
+        }
 
         const primeiraResposta = await anthropic.messages.create({
             model: CLAUDE_MODEL,
             max_tokens: 4096,
             system: montarChatSystemPrompt(categoriasExistentes),
             tools: CHAT_TOOLS,
-            messages: [{ role: 'user', content: message }],
+            messages: mensagensParaClaude,
         });
 
         const toolUses = primeiraResposta.content.filter(bloco => bloco.type === 'tool_use');
