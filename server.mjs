@@ -988,7 +988,7 @@ const CHAT_TOOLS = [
     },
     {
         name: 'consultar_gastos',
-        description: 'Usado quando a mensagem é uma pergunta ou pedido de relatório sobre os gastos já registrados. Exemplos: "no que eu mais gastei esse mês", "quanto gastei em Alimentação", "resumo do mês passado".',
+        description: 'Usado quando a pergunta é sobre os gastos do dia a dia lançados na aba Individual (compras do cartão/pessoais, divididas entre Kevin/Any/Conjunto). Exemplos: "no que eu mais gastei esse mês", "quanto gastei em Alimentação", "resumo do mês passado". NÃO use isso para perguntas sobre salário, contas fixas/recorrentes ou "quanto está sobrando" — para isso use consultar_geral.',
         input_schema: {
             type: 'object',
             properties: {
@@ -996,6 +996,21 @@ const CHAT_TOOLS = [
                     type: 'string',
                     enum: ['mes_atual', 'mes_anterior', 'ultimos_30_dias', 'ano_atual', 'tudo'],
                     description: 'Período a que a pergunta se refere. Use "mes_atual" como padrão se não for especificado.',
+                },
+            },
+            required: [],
+        },
+    },
+    {
+        name: 'consultar_geral',
+        description: 'Usado quando a pergunta é sobre o planejamento financeiro geral (aba "Geral"): salário/receitas, contas fixas ou recorrentes, total de despesas do mês, ou quanto está sobrando/faltando ("saldo"). Exemplos: "quanto está sobrando esse mês", "qual meu saldo", "quanto entrou de receita", "quanto tenho de despesa fixa esse mês".',
+        input_schema: {
+            type: 'object',
+            properties: {
+                periodo: {
+                    type: 'string',
+                    enum: ['mes_atual', 'mes_anterior'],
+                    description: 'Mês a que a pergunta se refere. Use "mes_atual" como padrão se não for especificado.',
                 },
             },
             required: [],
@@ -1066,7 +1081,7 @@ Data de hoje: ${new Date().toISOString().slice(0, 10)}.
 
 Quando a mensagem do usuário descrever uma compra/gasto recém-feito À VISTA, chame a ferramenta registrar_gasto.
 Quando a mensagem mencionar EXPLICITAMENTE parcelamento (palavras como "parcelado", "parcela", "vezes", "Nx de", "em N vezes"), chame a ferramenta registrar_gasto_parcelado em vez de registrar_gasto.
-Quando a mensagem for uma pergunta ou pedido de resumo/relatório sobre os gastos, chame a ferramenta consultar_gastos.
+Quando a mensagem for uma pergunta ou pedido de resumo/relatório sobre os gastos do dia a dia (aba Individual), chame a ferramenta consultar_gastos. Quando a pergunta for sobre salário, receitas, contas fixas/recorrentes ou quanto está sobrando/faltando no mês (aba Geral, o "Planejamento Financeiro"), chame consultar_geral.
 Se a mensagem contiver VÁRIOS gastos (por exemplo, uma lista com um item por linha, cada um com sua própria descrição e valor, como "- refrigerante: R$ 12,73"), chame a ferramenta registrar_gasto (ou registrar_gasto_parcelado, se for o caso) UMA VEZ PARA CADA item da lista, todas as chamadas na mesma resposta — nunca registre só o primeiro item e ignore o resto.
 
 MUITO IMPORTANTE — seja decisivo, nunca pergunte de volta: sempre que a mensagem tiver uma descrição curta e um valor (ex: "Presente 150", "Farmácia 45", "Netflix 39,90"), chame registrar_gasto IMEDIATAMENTE, sem pedir mais detalhes. Nunca responda com perguntas do tipo "pra quem foi o presente?", "isso é de qual categoria?" ou "confirma o valor?" — assuma o que for razoável e registre. Um número sozinho depois de uma palavra (ex: "150") é sempre o valor em reais (150 = R$ 150,00, nunca R$ 1,50). Escolha a categoria que fizer mais sentido pelo bom senso; se REALMENTE não der pra decidir uma categoria (nem uma nova faz sentido), use "Outros" — nunca deixe de registrar o gasto por causa da categoria.
@@ -1154,6 +1169,7 @@ app.post('/api/chat/message', async (req, res) => {
         const toolUses = primeiraResposta.content.filter(bloco => bloco.type === 'tool_use');
         const gastoToolUses = toolUses.filter(t => t.name === 'registrar_gasto' || t.name === 'registrar_gasto_parcelado');
         const consultaToolUse = toolUses.find(t => t.name === 'consultar_gastos');
+        const consultaGeralToolUse = toolUses.find(t => t.name === 'consultar_geral');
 
         let reply;
         let acao = 'chat';
@@ -1270,6 +1286,49 @@ Lançamentos individuais: ${JSON.stringify(gastos.map(g => ({ descricao: g.descr
             reply = segundaResposta.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
             acao = 'consulta';
             detalhes = { periodo, total, resumoPorCategoria, quantidade: gastos.length };
+
+        } else if (consultaGeralToolUse) {
+            // Pergunta sobre a aba "Geral" (salário/receitas, contas fixas/recorrentes, saldo do mês) —
+            // esses dados ficam na transactionsCollection, uma coleção separada da individualCollection
+            // (gastos do dia a dia). Antes não tinha ferramenta nenhuma pra isso, então a IA só conseguia
+            // responder sobre a aba Individual.
+            const toolUse = consultaGeralToolUse;
+            const periodo = toolUse.input.periodo === 'mes_anterior' ? 'mes_anterior' : 'mes_atual';
+            const { start, end } = intervaloDoPeriodo(periodo, referenciaVigente);
+            const anoConsulta = start.getUTCFullYear();
+            const mesConsulta = start.getUTCMonth() + 1;
+
+            // Garante que as transações recorrentes desse mês já foram replicadas antes de somar
+            // (mesma lógica da rota /api/summary que a tela usa).
+            await replicateRecurringTransactions(anoConsulta, mesConsulta);
+
+            const lancamentosGeral = await transactionsCollection.find({ date: { $gte: start, $lt: end } }).toArray();
+
+            let receitas = 0, despesas = 0;
+            const despesasPorCategoria = {};
+            for (const t of lancamentosGeral) {
+                if (t.type === 'RECEITA') {
+                    receitas += t.value;
+                } else {
+                    despesas += t.value;
+                    despesasPorCategoria[t.category] = (despesasPorCategoria[t.category] || 0) + t.value;
+                }
+            }
+            const saldoGeral = receitas - despesas;
+
+            const segundaRespostaGeral = await anthropic.messages.create({
+                model: CLAUDE_MODEL,
+                max_tokens: 512,
+                system: `Você é um assistente financeiro. Responda a pergunta do usuário de forma direta, curta (poucas frases) e em português, com base EXCLUSIVAMENTE nos dados abaixo (aba "Geral" do app — salário/receitas e despesas fixas/recorrentes do casal). Se não houver dados suficientes, diga isso.
+Dados do mês ${mesConsulta}/${anoConsulta}: Receitas totais R$ ${receitas.toFixed(2)}, Despesas totais R$ ${despesas.toFixed(2)}, Saldo (sobra/déficit) R$ ${saldoGeral.toFixed(2)}.
+Despesas por categoria: ${JSON.stringify(despesasPorCategoria)}
+Lançamentos: ${JSON.stringify(lancamentosGeral.map(t => ({ descricao: t.description, valor: t.value, tipo: t.type, categoria: t.category, data: t.date })))}`,
+                messages: [{ role: 'user', content: message }],
+            });
+
+            reply = segundaRespostaGeral.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
+            acao = 'consulta_geral';
+            detalhes = { periodo, mes: mesConsulta, ano: anoConsulta, receitas, despesas, saldo: saldoGeral, despesasPorCategoria };
 
         } else {
             reply = primeiraResposta.content.filter(b => b.type === 'text').map(b => b.text).join('\n')

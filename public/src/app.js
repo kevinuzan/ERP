@@ -1116,14 +1116,20 @@ function renderIndividualTable() {
         }
     });
 
-    // 2. Renderizar os Cards de Pessoa (Any, Kevin, Conjunto)
+    // 2. Renderizar os Cards de Pessoa (Any, Kevin, Conjunto) + Total geral logo abaixo
     const iconesPorPessoa = { Any: '👩', Kevin: '🧑', Conjunto: '🤝' };
+    const totalGeralIndividual = personTotals.Any + personTotals.Kevin + personTotals.Conjunto;
     personCardsContainer.innerHTML = Object.entries(personTotals).map(([name, total]) => `
         <div class="summary-card bg-white border-blue-200">
             <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider">${iconesPorPessoa[name] || '👤'} ${name}</h3>
             <p class="text-xl font-black text-blue-600">${formatCurrency(total)}</p>
         </div>
-    `).join('');
+    `).join('') + `
+        <div class="summary-card bg-gray-800 text-white border-gray-900">
+            <h3 class="text-xs font-bold text-gray-300 uppercase tracking-wider">💳 Total</h3>
+            <p class="text-xl font-black">${formatCurrency(totalGeralIndividual)}</p>
+        </div>
+    `;
 
     // 3. Filtrar dados para o gráfico e extrato (combinando Dono e Categoria)
     const filtered = indDataCache.filter(item => {
