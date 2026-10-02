@@ -56,6 +56,22 @@ function generateColors(count) {
 }
 
 /**
+ * Ajusta as cores padrão do Chart.js (legenda, textos, linhas de grade) conforme o tema
+ * claro/escuro ativo. Sem isso, no modo escuro a legenda e os textos do gráfico de pizza
+ * ficavam escuros (cor padrão do Chart.js) sobre um fundo também escuro — quase ilegível.
+ * Chamar isso ANTES de criar/recriar qualquer gráfico (e de novo ao trocar de tema).
+ */
+function aplicarTemaNosGraficos() {
+    if (typeof Chart === 'undefined') return;
+    const escuro = document.documentElement.classList.contains('dark');
+    Chart.defaults.color = escuro ? '#cbd5e1' : '#374151';
+    Chart.defaults.borderColor = escuro ? '#334155' : '#e5e7eb';
+    if (Chart.defaults.plugins && Chart.defaults.plugins.legend && Chart.defaults.plugins.legend.labels) {
+        Chart.defaults.plugins.legend.labels.color = escuro ? '#e2e8f0' : '#374151';
+    }
+}
+
+/**
  * Formata um número para moeda brasileira (R$).
  */
 function formatCurrency(value) {
@@ -89,6 +105,7 @@ function renderPieChart(breakdownData) {
         return;
     }
 
+    aplicarTemaNosGraficos();
     const backgroundColors = generateColors(breakdownData.length);
 
     expenseChart = new Chart(ctx, {
@@ -98,11 +115,14 @@ function renderPieChart(breakdownData) {
             datasets: [{
                 data: breakdownData.map(item => item.total),
                 backgroundColor: backgroundColors,
+                borderColor: document.documentElement.classList.contains('dark') ? '#1e293b' : '#ffffff',
+                borderWidth: 2,
                 hoverOffset: 10,
             }]
         },
         options: {
             responsive: true,
+            maintainAspectRatio: false,
             onClick: (evt, elements) => {
                 if (elements.length > 0) {
                     filtrarPorCategoriaGeral(breakdownData[elements[0].index].category);
@@ -203,11 +223,18 @@ function renderSummary(summaryData, saldo) {
     const breakdownList = expenseData ? expenseData.breakdown : [];
 
     if (breakdownList.length > 0) {
-        breakdownList.forEach(item => {
+        // Mesma paleta usada no gráfico de pizza (mesma ordem), com uma bolinha colorida ao lado
+        // de cada categoria — ajuda a ligar visualmente a fatia do gráfico à linha da tabela.
+        const cores = generateColors(breakdownList.length);
+        breakdownList.forEach((item, i) => {
             const row = tbody.insertRow();
-            row.insertCell(0).textContent = item.category;
-            row.insertCell(1).textContent = formatCurrency(item.total);
-            row.cells[1].classList.add('text-right');
+            row.className = 'hover:bg-gray-50';
+            const catCell = row.insertCell(0);
+            catCell.classList.add('px-3', 'py-2', 'text-sm');
+            catCell.innerHTML = `<span class="inline-block w-2.5 h-2.5 rounded-full mr-2 align-middle" style="background-color:${cores[i]}"></span><span class="align-middle">${item.category}</span>`;
+            const totalCell = row.insertCell(1);
+            totalCell.textContent = formatCurrency(item.total);
+            totalCell.classList.add('text-right', 'px-3', 'py-2', 'text-sm', 'font-semibold');
         });
     } else {
         tbody.innerHTML = '<tr><td colspan="2" class="text-center text-gray-500">Nenhum gasto registrado no mês.</td></tr>';
@@ -853,6 +880,21 @@ function toggleTheme() {
     localStorage.setItem('theme', escuroAgora ? 'dark' : 'light');
     const icone = document.getElementById('theme-toggle-icon');
     if (icone) icone.textContent = escuroAgora ? '☀️' : '🌙';
+
+    // O Chart.js desenha o texto da legenda/tooltip num <canvas> (bitmap), então trocar a
+    // classe "dark" no HTML não redesenha isso sozinho — precisa recriar o gráfico visível
+    // pra legenda não continuar com a cor do tema anterior.
+    aplicarTemaNosGraficos();
+    const abaIndividualAtiva = !document.getElementById('tab-individual').classList.contains('hidden');
+    if (abaIndividualAtiva) {
+        if (typeof renderIndividualTable === 'function') renderIndividualTable();
+    } else {
+        if (typeof fetchAndRenderBreakdownChart === 'function') {
+            const year = currentDisplayDate.getFullYear();
+            const month = currentDisplayDate.getMonth() + 1;
+            fetchAndRenderBreakdownChart(year, month);
+        }
+    }
 }
 
 // Ajusta o ícone do botão de tema conforme o que já foi aplicado no <head> (evita flash)
@@ -958,6 +1000,7 @@ function renderIndividualPieChart(data) {
 
     const breakdownData = Object.entries(categories).map(([category, total]) => ({ category, total }));
 
+    aplicarTemaNosGraficos();
     // Usar a mesma função de cores do seu app original
     const backgroundColors = typeof generateColors === 'function'
         ? generateColors(breakdownData.length)
@@ -970,6 +1013,8 @@ function renderIndividualPieChart(data) {
             datasets: [{
                 data: breakdownData.map(item => item.total),
                 backgroundColor: backgroundColors,
+                borderColor: document.documentElement.classList.contains('dark') ? '#1e293b' : '#ffffff',
+                borderWidth: 2,
                 hoverOffset: 10,
             }]
         },
@@ -1002,21 +1047,26 @@ function renderIndividualPieChart(data) {
         }
     });
 
-    // Renderiza a Tabela de Detalhes Lateral
-    renderIndividualCategoryTable(breakdownData);
+    // Renderiza a Tabela de Detalhes Lateral — mapeia categoria -> cor pela MESMA ordem usada
+    // no gráfico (antes de ordenar por total), pra bolinha da tabela bater com a fatia da pizza.
+    const mapaCores = {};
+    breakdownData.forEach((item, i) => { mapaCores[item.category] = backgroundColors[i]; });
+    renderIndividualCategoryTable(breakdownData, mapaCores);
 }
 
-function renderIndividualCategoryTable(breakdownList) {
+function renderIndividualCategoryTable(breakdownList, mapaCores = {}) {
     const tbody = document.getElementById('individual-category-body');
     tbody.innerHTML = '';
 
     if (breakdownList.length > 0) {
-        breakdownList.sort((a, b) => b.total - a.total).forEach(item => {
+        [...breakdownList].sort((a, b) => b.total - a.total).forEach(item => {
             const row = tbody.insertRow();
+            row.className = 'hover:bg-gray-50';
             const cellCat = row.insertCell(0);
             const cellTotal = row.insertCell(1);
 
-            cellCat.textContent = item.category;
+            const cor = mapaCores[item.category] || '#94a3b8';
+            cellCat.innerHTML = `<span class="inline-block w-2.5 h-2.5 rounded-full mr-2 align-middle" style="background-color:${cor}"></span><span class="align-middle">${item.category}</span>`;
             cellCat.classList.add('px-3', 'py-2', 'text-sm', 'text-gray-700');
 
             cellTotal.textContent = formatCurrency(item.total);
@@ -1617,10 +1667,12 @@ function renderTransactionList(transactions, mostrarSaldo = true) {
             saldoAcumulado -= t.value;
         }
 
-        row.insertCell(0).textContent = formattedDate;
-        row.insertCell(1).textContent = t.description;
-        row.insertCell(2).textContent = t.category;
-        row.insertCell(3).textContent = t.type;
+        row.insertCell(0).innerHTML = `<span class="text-gray-500">${formattedDate}</span>`;
+        row.insertCell(1).innerHTML = `<span class="font-medium text-gray-700">${t.description}</span>`;
+        row.insertCell(2).innerHTML = `<span class="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-xs font-semibold">${t.category}</span>`;
+        row.insertCell(3).innerHTML = isReceita
+            ? `<span class="bg-green-100 text-green-800 px-2 py-0.5 rounded text-xs font-bold">Receita</span>`
+            : `<span class="bg-red-100 text-red-800 px-2 py-0.5 rounded text-xs font-bold">Despesa</span>`;
 
         // Valor da Transação
         const valueCell = row.insertCell(4);
