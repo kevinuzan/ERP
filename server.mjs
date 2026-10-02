@@ -1086,13 +1086,22 @@ Se a mensagem contiver VÁRIOS gastos (por exemplo, uma lista com um item por li
 
 MUITO IMPORTANTE — seja decisivo, nunca pergunte de volta: sempre que a mensagem tiver uma descrição curta e um valor (ex: "Presente 150", "Farmácia 45", "Netflix 39,90"), chame registrar_gasto IMEDIATAMENTE, sem pedir mais detalhes. Nunca responda com perguntas do tipo "pra quem foi o presente?", "isso é de qual categoria?" ou "confirma o valor?" — assuma o que for razoável e registre. Um número sozinho depois de uma palavra (ex: "150") é sempre o valor em reais (150 = R$ 150,00, nunca R$ 1,50). Escolha a categoria que fizer mais sentido pelo bom senso; se REALMENTE não der pra decidir uma categoria (nem uma nova faz sentido), use "Outros" — nunca deixe de registrar o gasto por causa da categoria.
 Se a mensagem não for nenhuma dessas coisas (ex: um cumprimento), responda normalmente em texto, de forma breve.
-Você recebe junto com esta mensagem as últimas trocas da conversa (histórico) — use isso pra entender referências como "isso", "aquele gasto", "o mesmo de antes" ou uma pergunta de acompanhamento, em vez de tratar cada mensagem como se fosse a primeira.`;
+Você recebe junto com esta mensagem as últimas trocas da conversa (histórico) — use isso pra entender referências como "isso", "aquele gasto", "o mesmo de antes" ou uma pergunta de acompanhamento, em vez de tratar cada mensagem como se fosse a primeira.
+MUITO IMPORTANTE sobre o histórico: ele é só pra CONTEXTO. Toda mensagem NOVA do usuário que descrever um gasto precisa SEMPRE chamar a ferramenta registrar_gasto (ou registrar_gasto_parcelado) de novo, mesmo que o histórico mostre confirmações de gastos anteriores parecidas — nunca responda só com um texto de confirmação copiando o estilo de uma resposta anterior sem de fato chamar a ferramenta. Cada gasto novo = uma chamada de ferramenta nova.`;
 }
 
 // Quantas mensagens recentes (user+assistant somadas) mandar junto como contexto pro Claude —
 // antes disso a IA tratava CADA mensagem isolada, sem lembrar nada da conversa (ex: se o usuário
 // mandasse "foi 50" depois de "Presente", a IA não tinha como saber que "50" era o valor do presente).
 const HISTORICO_CHAT_LIMITE = 12;
+
+// Ações do assistente cujo texto de resposta é um "molde" de confirmação (ex: "✅ *Presente* —
+// R$ 150,00 (Outros, Conjunto)"). Colocar esse texto literal no histórico ensinava a IA, por
+// imitação de padrão, a simplesmente REPETIR esse formato de confirmação na próxima mensagem
+// parecida, SEM chamar a ferramenta registrar_gasto de novo — por isso o chat passou a "dizer que
+// registrou" sem registrar nada. Pra evitar isso, essas respostas entram no histórico como um
+// marcador neutro, não com o texto de confirmação de verdade.
+const ACOES_CONFIRMACAO_GASTO = ['gasto', 'gasto_parcelado', 'gastos_multiplos'];
 
 /**
  * Converte os últimos documentos do chatCollection (role 'user'/'assistant', já em ordem
@@ -1104,7 +1113,12 @@ function montarHistoricoChat(mensagens) {
     const resultado = [];
     for (const m of mensagens) {
         const role = m.role === 'assistant' ? 'assistant' : 'user';
-        const texto = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+        let texto;
+        if (role === 'assistant' && ACOES_CONFIRMACAO_GASTO.includes(m.action)) {
+            texto = '(gasto já registrado nesta troca — não repita esta confirmação por conta própria; se a próxima mensagem do usuário descrever OUTRO gasto, chame a ferramenta de novo)';
+        } else {
+            texto = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+        }
         if (!texto) continue;
         if (resultado.length > 0 && resultado[resultado.length - 1].role === role) {
             resultado[resultado.length - 1].content += '\n' + texto;
