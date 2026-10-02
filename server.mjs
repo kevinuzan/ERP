@@ -154,7 +154,17 @@ app.use(express.json());
 app.use(bodyParser.json());
 
 // Servir arquivos estáticos (assumindo que o index.html está na raiz)
-app.use(express.static(path.join(__dirname, 'public')));
+// Cache de 1 dia pros arquivos estáticos — reduz egress evitando reenviar o mesmo arquivo (ícones,
+// css) toda vez que alguém abre o app. O service-worker.js fica de fora (precisa ser sempre
+// buscado fresco, senão o navegador nunca percebe que existe uma versão nova do cache).
+app.use(express.static(path.join(__dirname, 'public'), {
+    maxAge: '1d',
+    setHeaders: (res, filePath) => {
+        if (filePath.endsWith('service-worker.js')) {
+            res.setHeader('Cache-Control', 'no-cache');
+        }
+    }
+}));
 app.get('/', function (req, res) {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
@@ -199,7 +209,16 @@ async function verificarVencimentos() {
         const hoje = new Date();
         hoje.setHours(0, 0, 0, 0);
 
-        const despesas = await transactionsColl.find({ type: 'DESPESA' }).toArray();
+        // Só interessa aqui o que vence entre ontem e daqui a 3 dias (o aviso é só pros próximos
+        // 0-2 dias, com uma folga). Buscar TODAS as despesas já lançadas desde sempre (como era
+        // antes) carrega o histórico inteiro na memória todo santo dia, e esse histórico só cresce
+        // com o tempo — era um dos maiores motivos do uso de memória subir aos poucos.
+        const janelaInicio = new Date(hoje.getTime() - 1 * 24 * 60 * 60 * 1000);
+        const janelaFim = new Date(hoje.getTime() + 3 * 24 * 60 * 60 * 1000);
+        const despesas = await transactionsColl.find({
+            type: 'DESPESA',
+            date: { $gte: janelaInicio, $lt: janelaFim }
+        }).toArray();
         const assinaturas = await subsCollection.find().toArray();
 
         if (assinaturas.length === 0) return;
@@ -257,13 +276,16 @@ cron.schedule('30 11 * * *', () => {
 });
 
 // 4. Rota para você disparar a mensagem (O GATILHO)
-app.get('/api/send-notif', (req, res) => {
+app.get('/api/send-notif', async (req, res) => {
     const payload = JSON.stringify({ title: "Finanças App", body: "Você recebeu uma atualização!" });
-
-    // Manda para todo mundo que acessou o site e aceitou o push
-    Promise.all(subscriptions.map(sub => webpush.sendNotification(sub, payload)))
-        .then(() => res.json({ success: true }))
-        .catch(err => res.status(500).json({ error: err.stack }));
+    try {
+        // Manda para todo mundo que acessou o site e aceitou o push
+        const assinaturas = await sharedDb.collection('subscriptions').find().toArray();
+        await Promise.all(assinaturas.map(sub => webpush.sendNotification(sub, payload)));
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.stack });
+    }
 });
 app.get('/api/test-push', async (req, res) => {
     try {
