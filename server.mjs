@@ -464,6 +464,35 @@ async function replicateRecurringTransactions(year, month) {
     return replicationPromise;
 }
 
+// Nome da despesa na aba Geral que representa a fatura do cartão (comparação sem diferenciar
+// maiúsculas/minúsculas nem espaços nas pontas).
+const DESCRICAO_FATURA_UNIQUE = 'fatura unique';
+
+/**
+ * Soma "valor" na despesa "Fatura Unique" (aba Geral) do mês de referência informado. Pedido do
+ * usuário: todo gasto lançado pelo chat (aba Individual) deve contar automaticamente na fatura do
+ * cartão que já existe na aba Geral, em vez de ficar só lançado na Individual, desconectado da
+ * fatura. Garante que as recorrências desse mês já foram replicadas antes de procurar (senão, num
+ * mês ainda não "visitado" na tela Geral, a Fatura Unique daquele mês nem existiria ainda).
+ * Retorna true se achou e somou, false se não achou nenhuma "Fatura Unique" nesse mês.
+ */
+async function somarFaturaUnique(anoReferencia, mesReferencia, valor) {
+    if (!transactionsCollection) return false;
+    await replicateRecurringTransactions(anoReferencia, mesReferencia);
+
+    const start = new Date(Date.UTC(anoReferencia, mesReferencia - 1, 1));
+    const end = new Date(Date.UTC(anoReferencia, mesReferencia, 1));
+    const fatura = await transactionsCollection.findOne({
+        type: 'DESPESA',
+        date: { $gte: start, $lt: end },
+        description: { $regex: new RegExp(`^\\s*${DESCRICAO_FATURA_UNIQUE}\\s*$`, 'i') },
+    });
+    if (!fatura) return false;
+
+    await transactionsCollection.updateOne({ _id: fatura._id }, { $inc: { value: valor } });
+    return true;
+}
+
 // Inicia o servidor e a conexão
 connectDB();
 
@@ -1169,8 +1198,13 @@ app.post('/api/chat/message', async (req, res) => {
                     };
                     const result = await individualCollection.insertOne(gasto);
 
-                    detalhesItens.push({ tipo: 'gasto', _id: result.insertedId, ...gasto });
-                    linhasResposta.push(`✅ *${description}* — R$ ${gasto.value.toFixed(2).replace('.', ',')} (${categoriaFinal}, ${owner})`);
+                    // Pedido do usuário: todo gasto lançado pelo chat soma automaticamente na
+                    // despesa "Fatura Unique" da aba Geral, no mês de referência desse gasto.
+                    const somouNaFatura = await somarFaturaUnique(referenciaChat.anoReferencia, referenciaChat.mesReferencia, gasto.value);
+
+                    detalhesItens.push({ tipo: 'gasto', _id: result.insertedId, somouNaFatura, ...gasto });
+                    linhasResposta.push(`✅ *${description}* — R$ ${gasto.value.toFixed(2).replace('.', ',')} (${categoriaFinal}, ${owner})`
+                        + (somouNaFatura ? '' : ' ⚠️ não achei a "Fatura Unique" desse mês pra somar'));
 
                 } else if (toolUse.name === 'registrar_gasto_parcelado') {
                     const { description, category } = toolUse.input;
@@ -1205,9 +1239,18 @@ app.post('/api/chat/message', async (req, res) => {
                     }
                     const resultParcelado = await individualCollection.insertMany(gastosParcelados);
 
-                    detalhesItens.push({ tipo: 'gasto_parcelado', insertedIds: resultParcelado.insertedIds, gastos: gastosParcelados });
+                    // Cada parcela soma na "Fatura Unique" do SEU próprio mês (ex: parcela 2/10 soma
+                    // na fatura de novembro, não na de outubro).
+                    let todasAsParcelasSomaram = true;
+                    for (const parcela of gastosParcelados) {
+                        const ok = await somarFaturaUnique(parcela.anoReferencia, parcela.mesReferencia, parcela.value);
+                        if (!ok) todasAsParcelasSomaram = false;
+                    }
+
+                    detalhesItens.push({ tipo: 'gasto_parcelado', insertedIds: resultParcelado.insertedIds, gastos: gastosParcelados, somouNaFatura: todasAsParcelasSomaram });
                     const totalParcelado = (installmentValue * installments).toFixed(2).replace('.', ',');
-                    linhasResposta.push(`✅ *${description}* em ${installments}x de R$ ${installmentValue.toFixed(2).replace('.', ',')} (total R$ ${totalParcelado}, ${categoriaFinal}, ${owner})`);
+                    linhasResposta.push(`✅ *${description}* em ${installments}x de R$ ${installmentValue.toFixed(2).replace('.', ',')} (total R$ ${totalParcelado}, ${categoriaFinal}, ${owner})`
+                        + (todasAsParcelasSomaram ? '' : ' ⚠️ não achei a "Fatura Unique" em algum desses meses pra somar'));
                 }
             }
 
