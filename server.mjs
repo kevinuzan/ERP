@@ -854,15 +854,21 @@ app.post('/api/transactions', async (req, res) => {
 
 
 // --- ROTA 3.1: Webhook do MacroDroid (Notificações do Santander) ---
-// Recebe o texto bruto extraído da notificação de compra e grava como transação.
-// Protegida por uma chave simples (evita que qualquer um na internet insira transações falsas).
-const SANTANDER_WEBHOOK_SECRET = process.env.SANTANDER_WEBHOOK_SECRET || "troque-essa-chave";
+// Recebe o texto bruto da notificação do app do Santander e lança na aba "Individual".
+//  - Compra aprovada  -> cria o gasto (dono pelo cartão, categoria/descrição via Claude) e soma na "Fatura Unique".
+//  - Compra cancelada -> acha a compra aprovada correspondente, apaga o gasto e desconta da "Fatura Unique".
+//  - Compra negada / PIX / qualquer outro texto -> ignorado (responde 200 pro MacroDroid não retentar).
+// Protegida por uma chave no header "x-webhook-secret" (variável de ambiente SANTANDER_WEBHOOK_SECRET).
+const SANTANDER_WEBHOOK_SECRET = process.env.SANTANDER_WEBHOOK_SECRET;
+const SANTANDER_CARTAO_ANY = '7324';          // cartão final 7324 -> Any; qualquer outro -> Kevin
+const SANTANDER_ORIGEM = 'macrodroid-santander';
 
 // Extrai os campos da notificação de compra do Santander a partir do texto bruto.
-// Cobre pelo menos dois formatos conhecidos:
+// Cobre os formatos conhecidos:
 // "Compra no cartão final 7324, de R$ 17,99, em 25/09/26, às 19:23, em ALTAAPROVACAO, aprovada."
+// "Compra no cartão final 9202, no valor de R$ 49,56, em 27/10/26, às 12:57, em DL.UberRides, cancelada."
 // "Compra internacional aprovada no cartão final 9202, de R$ 30,00, em 25/09/26, às 21:51, em BOARDGAMEARENA."
-// (no 2º formato o status vem no meio da frase, não no final)
+// (no formato internacional o status vem no meio da frase, não no final)
 function parseNotificacaoSantander(texto) {
     if (!texto) return null;
 
@@ -894,30 +900,62 @@ function parseNotificacaoSantander(texto) {
     };
 }
 
-app.post('/api/santander-webhook', async (req, res) => {
-    if (!individualCollection) {
+// Pede pro Claude (1) limpar o nome sujo do estabelecimento ("99APP .99" -> "99App") e
+// (2) escolher a categoria, preferindo uma das já existentes. Se a API falhar ou demorar,
+// o gasto é lançado mesmo assim, com o nome original e categoria "Outros".
+async function classificarGastoSantander(estabelecimento, categoriasExistentes) {
+    const fallback = { description: estabelecimento, category: 'Outros' };
+    if (!process.env.ANTHROPIC_API_KEY) return fallback;
+
+    try {
+        const resposta = await anthropic.messages.create({
+            model: CLAUDE_MODEL,
+            max_tokens: 150,
+            system: `Você classifica compras de cartão de crédito de um casal brasileiro a partir do nome do estabelecimento como aparece na notificação do banco (geralmente sujo, em maiúsculas ou truncado).
+Categorias já existentes (use uma destas sempre que fizer sentido): ${categoriasExistentes.join(', ')}.
+Se nenhuma servir, invente uma categoria nova, curta e em Title Case (ex: "Pet", "Assinaturas"), sem criar sinônimo de uma existente. Se realmente não der pra saber, use "Outros".
+Responda SOMENTE com um JSON, sem texto em volta: {"description": "<nome limpo e legível do estabelecimento, no máximo 40 caracteres>", "category": "<categoria>"}`,
+            messages: [{ role: 'user', content: estabelecimento }],
+        }, { timeout: 15000 });
+
+        const textoResposta = resposta.content.filter(b => b.type === 'text').map(b => b.text).join('');
+        const json = JSON.parse(textoResposta.match(/\{[\s\S]*\}/)[0]);
+        const description = String(json.description || '').trim().slice(0, 60) || estabelecimento;
+        return { description, category: resolverCategoria(json.category, categoriasExistentes) };
+    } catch (error) {
+        console.warn('Santander: falha ao classificar com Claude, usando fallback:', error.message);
+        return fallback;
+    }
+}
+
+app.post('/api/santander-webhook', express.text({ type: 'text/*' }), async (req, res) => {
+    if (!individualCollection || !appSettingsCollection) {
         return res.status(503).json({ error: "Servidor indisponível: Conexão DB falhou." });
     }
 
-    // --- Autenticação simples via header ---
-    const chaveRecebida = req.get('x-webhook-secret');
-    if (chaveRecebida !== SANTANDER_WEBHOOK_SECRET) {
+    // --- Autenticação via header (sem chave configurada no servidor, a rota fica fechada) ---
+    if (!SANTANDER_WEBHOOK_SECRET) {
+        return res.status(500).json({ error: "SANTANDER_WEBHOOK_SECRET não configurada no servidor." });
+    }
+    if (req.get('x-webhook-secret') !== SANTANDER_WEBHOOK_SECRET) {
         return res.status(401).json({ error: "Não autorizado." });
     }
 
-    // O MacroDroid manda o texto cru da notificação (título + corpo) — o parsing é feito aqui.
-    const { titulo, texto } = req.body;
-    const textoCompleto = [titulo, texto].filter(Boolean).join(' ');
-
+    // O MacroDroid manda o texto cru da notificação (JSON {"texto": "..."} ou texto puro).
+    let textoCompleto;
+    if (typeof req.body === 'string') {
+        textoCompleto = req.body.trim();
+    } else {
+        const { titulo, texto, title, text } = req.body || {};
+        textoCompleto = [titulo || title, texto || text].filter(Boolean).join(' ').trim();
+    }
     if (!textoCompleto) {
         return res.status(400).json({ error: "Campo 'texto' (ou 'titulo') é obrigatório.", body_recebido: req.body });
     }
 
     const dados = parseNotificacaoSantander(textoCompleto);
-
     if (!dados) {
-        // Não conseguiu reconhecer o formato (pode ser outro tipo de notificação, tipo PIX).
-        // Retorna 200 pra não gerar retentativas no MacroDroid, mas registra o que veio pra análise.
+        // Outro tipo de notificação (PIX, etc.). 200 pra não gerar retentativas no MacroDroid.
         console.warn("Notificação Santander não reconhecida:", textoCompleto);
         return res.status(200).json({
             message: "Notificação recebida, mas não reconhecida como compra no cartão. Ignorada.",
@@ -925,51 +963,104 @@ app.post('/api/santander-webhook', async (req, res) => {
         });
     }
 
-    // Normaliza o valor ("17,99" -> 17.99)
-    const valorNumerico = parseFloat(dados.valor.replace(/\./g, '').replace(',', '.'));
-
-    // Normaliza a data "DD/MM/AA" ou "DD/MM/AAAA"
-    const [dia, mes, anoBruto] = dados.data.split('/');
-    const ano = anoBruto.length === 2 ? `20${anoBruto}` : anoBruto;
-    const dataTransacao = new Date(Date.UTC(parseInt(ano), parseInt(mes) - 1, parseInt(dia)));
-
-    // Compra negada: nenhum dinheiro se moveu, não vira transação.
     if (dados.status === 'negada') {
         return res.status(200).json({ message: "Compra negada, ignorada (nenhum valor movimentado)." });
     }
 
-    // A aba "Individual" não tem campo de tipo (RECEITA/DESPESA) — tudo é lançado como "value".
-    // Compra aprovada -> valor positivo (despesa). Compra cancelada (estorno de uma aprovada
-    // anterior) -> valor NEGATIVO, pra abater da soma do mês sem precisar achar e apagar o lançamento antigo.
-    const valorFinal = dados.status === 'cancelada' ? -valorNumerico : valorNumerico;
-    const descricao = dados.status === 'cancelada'
-        ? `Estorno - ${dados.estabelecimento}`
-        : dados.estabelecimento;
-
-    const referenciaSantander = await calcularReferencia(dataTransacao);
-    const expense = {
-        description: descricao,
-        value: valorFinal,
-        owner: 'Conjunto',
-        category: 'Outros',
-        date: dataTransacao,
-        origem: 'macrodroid-santander',
-        cartaoFinal: dados.cartaoFinal,
-        horaCompra: dados.hora,
-        textoOriginal: textoCompleto,
-        ...referenciaSantander,
-    };
-
     try {
-        const result = await individualCollection.insertOne(expense);
-        res.status(201).json({
+        // Normaliza valor ("1.234,50" -> 1234.5), data ("DD/MM/AA[AA]") e hora (horário de Brasília, UTC-3).
+        const valorNumerico = parseFloat(dados.valor.replace(/\./g, '').replace(',', '.'));
+        const [dia, mes, anoBruto] = dados.data.split('/').map(Number);
+        const ano = anoBruto < 100 ? 2000 + anoBruto : anoBruto;
+        const [h, min] = dados.hora.split(':').map(Number);
+        const diaUtc = new Date(Date.UTC(ano, mes - 1, dia));
+        const dataCompraReal = new Date(Date.UTC(ano, mes - 1, dia, h + 3, min));
+
+        // Chave que identifica a compra: a notificação "aprovada" e a "cancelada" dela trazem os mesmos
+        // cartão/valor/data/hora/estabelecimento. Serve pra evitar duplicata e pra achar o gasto a estornar.
+        const estabNormalizado = normalizarCategoria(dados.estabelecimento).replace(/\s+/g, ' ');
+        const chaveCompra = [dados.cartaoFinal, Math.round(valorNumerico * 100), diaUtc.toISOString().slice(0, 10), dados.hora, estabNormalizado].join('|');
+        const idMarcadorCancelamento = `santander-cancelada:${chaveCompra}`;
+
+        // ---------- CANCELAMENTO ----------
+        if (dados.status === 'cancelada') {
+            const gasto = await individualCollection.findOne({ origem: SANTANDER_ORIGEM, chaveCompra });
+            if (!gasto) {
+                // A aprovada pode ainda não ter chegado (notificações fora de ordem): deixa um marcador
+                // pra, quando ela chegar, não ser lançada.
+                await appSettingsCollection.updateOne(
+                    { _id: idMarcadorCancelamento },
+                    { $set: { criadoEm: new Date() } },
+                    { upsert: true }
+                );
+                console.warn("Santander: cancelamento sem compra aprovada correspondente:", textoCompleto);
+                return res.status(200).json({ message: "Cancelamento recebido, mas não achei a compra aprovada correspondente. Marcado pra ignorar se ela chegar depois." });
+            }
+
+            await individualCollection.deleteOne({ _id: gasto._id });
+            const descontouDaFatura = await somarFaturaUnique(gasto.anoReferencia, gasto.mesReferencia, -gasto.value);
+            return res.status(200).json({
+                message: "Compra cancelada: gasto removido da aba Individual.",
+                removido: { _id: gasto._id, description: gasto.description, value: gasto.value, owner: gasto.owner },
+                descontouDaFatura,
+            });
+        }
+
+        // ---------- COMPRA APROVADA ----------
+        const jaExiste = await individualCollection.findOne({ origem: SANTANDER_ORIGEM, chaveCompra });
+        if (jaExiste) {
+            return res.status(200).json({ message: "Compra já registrada anteriormente (notificação duplicada). Ignorada.", _id: jaExiste._id });
+        }
+
+        const marcador = await appSettingsCollection.findOne({ _id: idMarcadorCancelamento });
+        if (marcador) {
+            await appSettingsCollection.deleteOne({ _id: idMarcadorCancelamento });
+            return res.status(200).json({ message: "Compra aprovada chegou depois do cancelamento dela. Ignorada." });
+        }
+
+        // Estabelecimento já visto antes: reaproveita descrição/categoria (consistência e menos chamadas à API).
+        let classificacao;
+        const anterior = await individualCollection.findOne(
+            { origem: SANTANDER_ORIGEM, estabelecimentoOriginal: dados.estabelecimento },
+            { sort: { date: -1 } }
+        );
+        if (anterior) {
+            classificacao = { description: anterior.description, category: anterior.category };
+        } else {
+            classificacao = await classificarGastoSantander(dados.estabelecimento, await listarCategorias());
+        }
+
+        const owner = dados.cartaoFinal === SANTANDER_CARTAO_ANY ? 'Any' : 'Kevin';
+        const referencia = await calcularReferencia(diaUtc);
+        const gasto = {
+            description: classificacao.description,
+            value: valorNumerico,
+            owner,
+            category: classificacao.category,
+            date: dataParaReferencia(referencia, dataCompraReal),
+            dataCompra: dataCompraReal, // dia/hora reais da compra, pro extrato mostrar certinho
+            origem: SANTANDER_ORIGEM,
+            cartaoFinal: dados.cartaoFinal,
+            horaCompra: dados.hora,
+            estabelecimentoOriginal: dados.estabelecimento,
+            chaveCompra,
+            textoOriginal: textoCompleto,
+            ...referencia,
+        };
+
+        const result = await individualCollection.insertOne(gasto);
+        // Igual ao chat: todo gasto da Individual soma na despesa "Fatura Unique" da aba Geral.
+        const somouNaFatura = await somarFaturaUnique(referencia.anoReferencia, referencia.mesReferencia, valorNumerico);
+
+        return res.status(201).json({
             message: "Gasto do Santander registrado na aba Individual com sucesso!",
             _id: result.insertedId,
-            gasto: expense,
+            somouNaFatura,
+            gasto,
         });
     } catch (error) {
-        console.error("Erro ao inserir gasto do Santander:", error);
-        res.status(500).json({ error: "Erro ao salvar gasto no DB." });
+        console.error("Erro ao processar notificação do Santander:", error);
+        return res.status(500).json({ error: "Erro ao processar notificação do Santander." });
     }
 });
 
