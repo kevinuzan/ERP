@@ -936,6 +936,57 @@ async function loadIndividualData() {
     indDataCache = await response.json();
     renderIndividualTable();
     sincronizarCategorias();
+    carregarOrcamento();
+}
+
+// Card "Orçamento do mês" (aba Individual): quanto já foi gasto, quanto resta da Sobra/Déficit
+// da aba Geral e quanto pode gastar por dia até o fim do mês.
+async function carregarOrcamento() {
+    const card = document.getElementById('budget-card');
+    if (!card) return;
+    try {
+        const mes = indCurrentDate.getMonth() + 1;
+        const ano = indCurrentDate.getFullYear();
+        const response = await fetch(`/api/budget-status?year=${ano}&month=${mes}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const d = await response.json();
+
+        const pct = d.percentual;
+        const cor = pct === null || pct >= 80 ? '#dc2626' : (pct >= 50 ? '#f59e0b' : '#16a34a');
+        const larguraBarra = pct === null ? 100 : Math.min(pct, 100);
+        const pctTexto = pct === null ? '' : ` (${String(pct).replace('.', ',')}% do disponível)`;
+
+        let linhaRestante;
+        if (d.saldo < 0) {
+            linhaRestante = `<span style="color:#dc2626;font-weight:700">Déficit de ${formatCurrency(Math.abs(d.saldo))}</span> — o mês já passou do que estava disponível.`;
+        } else if (d.diasRestantes) {
+            const dias = d.diasRestantes === 1 ? '1 dia' : `${d.diasRestantes} dias`;
+            linhaRestante = `Restam <b>${formatCurrency(d.saldo)}</b> para ${dias}`
+                + (d.gastoDiarioSugerido !== null ? ` → <b>${formatCurrency(d.gastoDiarioSugerido)}</b> por dia.` : '.');
+        } else {
+            linhaRestante = `Sobraram <b>${formatCurrency(d.saldo)}</b> no mês.`;
+        }
+
+        const linhaHoje = (d.diasRestantes && d.gastoHoje > 0 && d.gastoDiarioSugerido !== null)
+            ? `<p class="text-xs text-gray-500 mt-1">Hoje você já gastou ${formatCurrency(d.gastoHoje)}.</p>`
+            : '';
+
+        card.innerHTML = `
+            <h3 class="text-xs font-bold text-gray-400 uppercase mb-2">💰 Orçamento do mês</h3>
+            <p class="text-sm">Você já gastou <b>${formatCurrency(d.gasto)}</b>${pctTexto}.</p>
+            <div class="relative w-full h-3 bg-gray-100 rounded-full overflow-hidden my-2">
+                <div style="width:${larguraBarra}%;background:${cor};height:100%;border-radius:9999px;transition:width .4s"></div>
+                <div style="position:absolute;left:30%;top:0;width:2px;height:100%;background:rgba(0,0,0,.25)"></div>
+                <div style="position:absolute;left:50%;top:0;width:2px;height:100%;background:rgba(0,0,0,.25)"></div>
+            </div>
+            <p class="text-sm">${linhaRestante}</p>
+            ${linhaHoje}
+            <p class="text-[10px] text-gray-400 mt-2">Considera os gastos lançados pelo chat e pelas notificações do Santander. Disponível = Sobra / Déficit da aba Geral.</p>`;
+        card.classList.remove('hidden');
+    } catch (e) {
+        console.error('Erro ao carregar orçamento do mês:', e);
+        card.classList.add('hidden');
+    }
 }
 
 // Busca as categorias existentes no servidor (incluindo as criadas pelo chat) e atualiza

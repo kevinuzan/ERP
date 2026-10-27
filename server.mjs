@@ -555,6 +555,151 @@ app.get('/api/summary', async (req, res) => {
         res.status(500).json({ error: "Erro interno do servidor ao gerar o resumo." });
     }
 });
+// --- ORÇAMENTO DO MÊS ---
+// "Disponível" = Sobra/Déficit da aba Geral (que já vai diminuindo conforme a "Fatura Unique" recebe os
+// gastos). Como só os gastos lançados pelo chat e pelas notificações do Santander somam na Fatura Unique,
+// só eles entram em "já gastou": assim, orçamento inicial = sobra atual + o que já foi gasto, e a
+// porcentagem fica coerente. Usado pelo card da aba Individual e pelos avisos push.
+async function calcularOrcamentoMes(y, m) {
+    await replicateRecurringTransactions(y, m);
+    const start = new Date(Date.UTC(y, m - 1, 1));
+    const end = new Date(Date.UTC(y, m, 1));
+
+    // Sobra / Déficit do mês (mesma conta do /api/summary)
+    const totais = await transactionsCollection.aggregate([
+        { $match: { date: { $gte: start, $lt: end } } },
+        { $group: { _id: "$type", total: { $sum: "$value" } } },
+    ]).toArray();
+    const receitas = totais.find(t => t._id === 'RECEITA')?.total || 0;
+    const despesas = totais.find(t => t._id === 'DESPESA')?.total || 0;
+    const saldo = receitas - despesas;
+
+    // Gastos do mês de referência que somam na Fatura Unique (chat + Santander)
+    const filtroMes = {
+        origem: { $in: ['chat-claude', SANTANDER_ORIGEM] },
+        $or: [
+            { anoReferencia: y, mesReferencia: m },
+            { anoReferencia: { $exists: false }, date: { $gte: start, $lt: end } },
+        ],
+    };
+    const agg = await individualCollection.aggregate([
+        { $match: filtroMes },
+        { $group: { _id: null, total: { $sum: "$value" } } },
+    ]).toArray();
+    const gasto = agg[0]?.total || 0;
+
+    // Dias restantes (contando hoje): mês atual -> até o último dia; mês futuro -> mês inteiro; mês passado -> null.
+    const hoje = hojeEmSaoPaulo();
+    const chaveHoje = hoje.getUTCFullYear() * 12 + hoje.getUTCMonth();
+    const chaveMes = y * 12 + (m - 1);
+    const diasNoMes = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    let diasRestantes = null;
+    let gastoHoje = 0;
+    if (chaveMes === chaveHoje) {
+        diasRestantes = diasNoMes - hoje.getUTCDate() + 1;
+        const inicioHoje = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth(), hoje.getUTCDate(), 3)); // 00:00 em Brasília
+        const fimHoje = new Date(inicioHoje.getTime() + 24 * 60 * 60 * 1000);
+        const aggHoje = await individualCollection.aggregate([
+            { $match: { ...filtroMes, dataCompra: { $gte: inicioHoje, $lt: fimHoje } } },
+            { $group: { _id: null, total: { $sum: "$value" } } },
+        ]).toArray();
+        gastoHoje = aggHoje[0]?.total || 0;
+    } else if (chaveMes > chaveHoje) {
+        diasRestantes = diasNoMes;
+    }
+
+    const orcamento = saldo + gasto; // quanto estava disponível antes desses gastos
+    const r2 = n => Math.round(n * 100) / 100;
+    return {
+        year: y,
+        month: m,
+        saldo: r2(saldo),
+        gasto: r2(gasto),
+        gastoHoje: r2(gastoHoje),
+        orcamento: r2(orcamento),
+        percentual: orcamento > 0 ? Math.round((gasto / orcamento) * 1000) / 10 : null,
+        diasRestantes,
+        gastoDiarioSugerido: diasRestantes && saldo > 0 ? r2(saldo / diasRestantes) : null,
+    };
+}
+
+app.get('/api/budget-status', async (req, res) => {
+    if (!transactionsCollection || !individualCollection) {
+        return res.status(503).json({ error: "Servidor indisponível: Conexão DB falhou." });
+    }
+    const y = parseInt(req.query.year);
+    const m = parseInt(req.query.month);
+    if (!Number.isInteger(y) || !Number.isInteger(m) || m < 1 || m > 12) {
+        return res.status(400).json({ error: "Parâmetros 'year' e 'month' (numéricos) são obrigatórios." });
+    }
+    try {
+        res.json(await calcularOrcamentoMes(y, m));
+    } catch (error) {
+        console.error("Erro ao calcular orçamento do mês:", error);
+        res.status(500).json({ error: "Erro ao calcular orçamento do mês." });
+    }
+});
+
+// --- AVISO PUSH DO ORÇAMENTO (a cada compra do Santander registrada ou cancelada) ---
+const LIMIARES_ORCAMENTO = [30, 50, 80, 100];
+const fmtBRL = n => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(n);
+
+async function enviarPushParaTodos(title, body) {
+    if (!sharedDb || !process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) return;
+    const subsCollection = sharedDb.collection('subscriptions');
+    const assinaturas = await subsCollection.find().toArray();
+    if (assinaturas.length === 0) return;
+    const payload = JSON.stringify({ title, body, url: "/" });
+    await Promise.all(assinaturas.map(sub =>
+        webpush.sendNotification(sub, payload).catch(err => {
+            // Inscrição expirada/removida: limpa do banco
+            if (err.statusCode === 404 || err.statusCode === 410) {
+                subsCollection.deleteOne({ endpoint: sub.endpoint });
+            } else {
+                console.warn('Falha ao enviar push:', err.statusCode || err.message);
+            }
+        })
+    ));
+}
+
+// Monta e envia o push de uma compra: o que aconteceu + quanto já gastou, quanto resta e o gasto sugerido por dia.
+// Nunca lança erro (um push que falha não pode atrapalhar o registro da compra).
+async function notificarOrcamentoPush({ cancelada, descricao, valor, owner, ano, mes }) {
+    try {
+        const o = await calcularOrcamentoMes(ano, mes);
+
+        let titulo = cancelada
+            ? `↩️ Compra cancelada: ${descricao} ${fmtBRL(valor)}`
+            : `💳 ${descricao} ${fmtBRL(valor)} (${owner})`;
+
+        // Compra que fez o gasto cruzar 30% / 50% / 80% / 100% do disponível
+        if (!cancelada && o.orcamento > 0) {
+            const antes = ((o.gasto - valor) / o.orcamento) * 100;
+            const depois = (o.gasto / o.orcamento) * 100;
+            const cruzado = LIMIARES_ORCAMENTO.filter(l => antes < l && depois >= l).pop();
+            if (cruzado) titulo = `⚠️ Passou de ${cruzado}% do orçamento! ${titulo}`;
+        }
+
+        const linhas = [];
+        const pctTexto = o.percentual === null ? '' : ` (${String(o.percentual).replace('.', ',')}% do disponível)`;
+        linhas.push(`Já gastou ${fmtBRL(o.gasto)}${pctTexto}`);
+        if (o.saldo < 0) {
+            linhas.push(`Déficit de ${fmtBRL(Math.abs(o.saldo))} no mês`);
+        } else if (o.diasRestantes) {
+            const dias = o.diasRestantes === 1 ? '1 dia' : `${o.diasRestantes} dias`;
+            linhas.push(`Restam ${fmtBRL(o.saldo)} para ${dias}`
+                + (o.gastoDiarioSugerido !== null ? ` → ${fmtBRL(o.gastoDiarioSugerido)} por dia` : ''));
+        } else {
+            linhas.push(`Sobraram ${fmtBRL(o.saldo)} no mês`);
+        }
+        if (o.diasRestantes && o.gastoHoje > 0) linhas.push(`Hoje: ${fmtBRL(o.gastoHoje)}`);
+
+        await enviarPushParaTodos(titulo, linhas.join('\n'));
+    } catch (error) {
+        console.error('Erro ao enviar push do orçamento:', error);
+    }
+}
+
 // Rota para editar um gasto individual existente
 app.put('/api/individual/:id', async (req, res) => {
     try {
@@ -999,11 +1144,14 @@ app.post('/api/santander-webhook', express.text({ type: 'text/*' }), async (req,
 
             await individualCollection.deleteOne({ _id: gasto._id });
             const descontouDaFatura = await somarFaturaUnique(gasto.anoReferencia, gasto.mesReferencia, -gasto.value);
-            return res.status(200).json({
+            res.status(200).json({
                 message: "Compra cancelada: gasto removido da aba Individual.",
                 removido: { _id: gasto._id, description: gasto.description, value: gasto.value, owner: gasto.owner },
                 descontouDaFatura,
             });
+            // Resposta já enviada ao MacroDroid; o push vai depois, sem atrasar nem derrubar o registro.
+            await notificarOrcamentoPush({ cancelada: true, descricao: gasto.description, valor: gasto.value, owner: gasto.owner, ano: gasto.anoReferencia, mes: gasto.mesReferencia });
+            return;
         }
 
         // ---------- COMPRA APROVADA ----------
@@ -1052,12 +1200,15 @@ app.post('/api/santander-webhook', express.text({ type: 'text/*' }), async (req,
         // Igual ao chat: todo gasto da Individual soma na despesa "Fatura Unique" da aba Geral.
         const somouNaFatura = await somarFaturaUnique(referencia.anoReferencia, referencia.mesReferencia, valorNumerico);
 
-        return res.status(201).json({
+        res.status(201).json({
             message: "Gasto do Santander registrado na aba Individual com sucesso!",
             _id: result.insertedId,
             somouNaFatura,
             gasto,
         });
+        // Resposta já enviada ao MacroDroid; o push vai depois, sem atrasar nem derrubar o registro.
+        await notificarOrcamentoPush({ cancelada: false, descricao: gasto.description, valor: valorNumerico, owner, ano: referencia.anoReferencia, mes: referencia.mesReferencia });
+        return;
     } catch (error) {
         console.error("Erro ao processar notificação do Santander:", error);
         return res.status(500).json({ error: "Erro ao processar notificação do Santander." });
