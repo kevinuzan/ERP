@@ -849,24 +849,28 @@ app.put('/api/individual/:id', async (req, res) => {
         const antigo = await individualCollection.findOne({ _id });
         if (!antigo) return res.status(404).json({ error: "Gasto não encontrado." });
 
-        const novaRef = { ano: dataCompra.getUTCFullYear(), mes: dataCompra.getUTCMonth() + 1 };
-        // Edição é uma correção explícita do usuário: usa o mês da própria data escolhida,
+        // Se a DATA não foi mexida, o mês de referência (que já considera o fechamento da fatura e o
+        // "valer para o mês seguinte") e a data gravada são preservados. Recalcular o mês pela data real
+        // jogava, por exemplo, uma compra de 29/10 (que já valia pra fatura de novembro) de volta pra outubro.
+        // Se a data foi alterada, vale a correção explícita do usuário: usa o mês da data escolhida,
         // sem aplicar o override de "próximo mês" (esse só vale pra lançamentos novos "de agora").
-        await individualCollection.updateOne(
-            { _id },
-            {
-                $set: {
-                    description,
-                    value: novoValor,
-                    owner,
-                    date: dataCompra,
-                    dataCompra, // edição manual: a data escolhida passa a ser a data real também
-                    category,
-                    anoReferencia: novaRef.ano,
-                    mesReferencia: novaRef.mes,
-                }
-            }
-        );
+        const dataAntiga = new Date(antigo.dataCompra || antigo.date).toISOString().slice(0, 10);
+        const mudouData = dataAntiga !== dataCompra.toISOString().slice(0, 10);
+
+        let novaRef;
+        const campos = { description, value: novoValor, owner, category };
+        if (mudouData) {
+            novaRef = { ano: dataCompra.getUTCFullYear(), mes: dataCompra.getUTCMonth() + 1 };
+            Object.assign(campos, {
+                date: dataCompra,
+                dataCompra, // edição manual: a data escolhida passa a ser a data real também
+                anoReferencia: novaRef.ano,
+                mesReferencia: novaRef.mes,
+            });
+        } else {
+            novaRef = referenciaDoGasto(antigo);
+        }
+        await individualCollection.updateOne({ _id }, { $set: campos });
 
         // Mantém a Fatura Unique coerente com a edição (valor e/ou mês mudaram)
         if (gastoSomouNaFatura(antigo)) {
