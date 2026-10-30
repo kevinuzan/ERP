@@ -576,10 +576,19 @@ async function calcularOrcamentoMes(y, m) {
 
     // Gastos do mês de referência que somam na Fatura Unique (chat + Santander)
     const filtroMes = {
-        origem: { $in: ['chat-claude', SANTANDER_ORIGEM] },
-        $or: [
-            { anoReferencia: y, mesReferencia: m },
-            { anoReferencia: { $exists: false }, date: { $gte: start, $lt: end } },
+        $and: [
+            {
+                $or: [
+                    { somouNaFatura: true },
+                    { somouNaFatura: { $exists: false }, origem: { $in: ['chat-claude', SANTANDER_ORIGEM] } },
+                ],
+            },
+            {
+                $or: [
+                    { anoReferencia: y, mesReferencia: m },
+                    { anoReferencia: { $exists: false }, date: { $gte: start, $lt: end } },
+                ],
+            },
         ],
     };
     const agg = await individualCollection.aggregate([
@@ -700,49 +709,231 @@ async function notificarOrcamentoPush({ cancelada, descricao, valor, owner, ano,
     }
 }
 
+// --- GASTOS PARCELADOS + FATURA UNIQUE ---
+// Regra: todo gasto da aba Individual que somou na "Fatura Unique" ao ser criado precisa ser subtraído
+// dela quando for excluído (e ajustado quando for editado). O campo "somouNaFatura" registra se a soma
+// aconteceu; gastos antigos, sem o campo, são tratados pela origem (chat e Santander sempre somaram).
+function gastoSomouNaFatura(doc) {
+    if (typeof doc.somouNaFatura === 'boolean') return doc.somouNaFatura;
+    return ['chat-claude', SANTANDER_ORIGEM].includes(doc.origem);
+}
+
+// Mês/ano de referência do gasto (gastos muito antigos não têm o campo: usa o mês da própria data).
+function referenciaDoGasto(doc) {
+    const d = new Date(doc.date);
+    return {
+        ano: doc.anoReferencia ?? d.getUTCFullYear(),
+        mes: doc.mesReferencia ?? d.getUTCMonth() + 1,
+    };
+}
+
+function escapeRegex(texto) {
+    return String(texto).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Descobre se o gasto é uma parcela e qual (nº/total). Parcelas novas trazem os campos
+// parcelaNumero/parcelaTotal; as antigas só têm "(2/10)" no final da descrição.
+function infoParcela(doc) {
+    const base = String(doc.description || '').replace(/\s*\(\d+\/\d+\)\s*$/, '');
+    if (doc.parcelaTotal > 1 && doc.parcelaNumero) {
+        return { numero: doc.parcelaNumero, total: doc.parcelaTotal, base };
+    }
+    const m = String(doc.description || '').match(/^(.*?)\s*\((\d+)\/(\d+)\)\s*$/);
+    if (m && parseInt(m[3]) > 1) {
+        return { numero: parseInt(m[2]), total: parseInt(m[3]), base: m[1] };
+    }
+    return null;
+}
+
+// Parcelas seguintes à informada (nº maior), do mesmo parcelamento.
+async function localizarParcelasSeguintes(doc) {
+    const info = infoParcela(doc);
+    if (!info) return [];
+
+    if (doc.grupoParcelas) {
+        return individualCollection.find({ grupoParcelas: doc.grupoParcelas, parcelaNumero: { $gt: info.numero } }).toArray();
+    }
+
+    // Parcelas antigas (sem grupo): mesma descrição base, mesmo dono, mesmo total de parcelas e mesmo valor.
+    const regex = new RegExp(`^${escapeRegex(info.base)}\\s*\\((\\d+)/${info.total}\\)\\s*$`);
+    const candidatos = await individualCollection.find({ owner: doc.owner, description: { $regex: regex } }).toArray();
+    return candidatos.filter(c =>
+        String(c._id) !== String(doc._id)
+        && !c.grupoParcelas
+        && Math.abs(c.value - doc.value) < 0.011
+        && new Date(c.date) >= new Date(doc.date)
+        && parseInt(c.description.match(regex)[1]) > info.numero
+    );
+}
+
+// Exclui o gasto (e, se for parcela, as parcelas seguintes), descontando cada um da Fatura Unique do seu mês.
+async function excluirGastoComParcelas(doc) {
+    const seguintes = await localizarParcelasSeguintes(doc);
+    const todos = [doc, ...seguintes];
+    let descontado = 0;
+    for (const g of todos) {
+        await individualCollection.deleteOne({ _id: g._id });
+        if (gastoSomouNaFatura(g)) {
+            const ref = referenciaDoGasto(g);
+            const ok = await somarFaturaUnique(ref.ano, ref.mes, -g.value);
+            if (ok) descontado += g.value;
+        }
+    }
+    return { deletados: todos.length, descontado: Math.round(descontado * 100) / 100 };
+}
+
+// Transforma um gasto lançado como TOTAL em compra parcelada: o gasto atual vira a parcela 1/N e as
+// parcelas 2..N são criadas nos meses seguintes. A Fatura Unique é ajustada mês a mês.
+async function parcelarGasto(doc, parcelas) {
+    const total = doc.value;
+    const valorParcela = Math.round((total / parcelas) * 100) / 100;
+    const valores = Array.from({ length: parcelas }, () => valorParcela);
+    valores[parcelas - 1] = Math.round((total - valorParcela * (parcelas - 1)) * 100) / 100; // a última absorve o arredondamento
+
+    const base = String(doc.description || '');
+    const ref = referenciaDoGasto(doc);
+    const somou = gastoSomouNaFatura(doc);
+    const grupoParcelas = new ObjectId().toString();
+    const diaCompra = new Date(doc.dataCompra || doc.date).getUTCDate();
+
+    // Parcela 1 = o próprio gasto
+    await individualCollection.updateOne({ _id: doc._id }, {
+        $set: {
+            description: `${base} (1/${parcelas})`,
+            value: valores[0],
+            grupoParcelas,
+            parcelaNumero: 1,
+            parcelaTotal: parcelas,
+            somouNaFatura: somou,
+        },
+    });
+    if (somou) await somarFaturaUnique(ref.ano, ref.mes, valores[0] - total);
+
+    // Parcelas 2..N, um mês de referência após o outro
+    for (let i = 1; i < parcelas; i++) {
+        const refParcela = avancarReferencia(ref.ano, ref.mes, i);
+        const ultimoDia = new Date(Date.UTC(refParcela.anoReferencia, refParcela.mesReferencia, 0)).getUTCDate();
+        const nova = {
+            description: `${base} (${i + 1}/${parcelas})`,
+            value: valores[i],
+            owner: doc.owner,
+            category: doc.category,
+            date: new Date(Date.UTC(refParcela.anoReferencia, refParcela.mesReferencia - 1, Math.min(diaCompra, ultimoDia))),
+            dataCompra: doc.dataCompra || doc.date,
+            origem: doc.origem || 'manual',
+            ...refParcela,
+            grupoParcelas,
+            parcelaNumero: i + 1,
+            parcelaTotal: parcelas,
+            somouNaFatura: false,
+        };
+        const result = await individualCollection.insertOne(nova);
+        if (somou) {
+            const ok = await somarFaturaUnique(refParcela.anoReferencia, refParcela.mesReferencia, valores[i]);
+            await individualCollection.updateOne({ _id: result.insertedId }, { $set: { somouNaFatura: ok } });
+        }
+    }
+    return { parcelas, valorParcela, valorUltimaParcela: valores[parcelas - 1], somouNaFatura: somou };
+}
+
 // Rota para editar um gasto individual existente
 app.put('/api/individual/:id', async (req, res) => {
     try {
         const { description, value, owner, date, category } = req.body;
         const dataCompra = new Date(date);
+        const novoValor = parseFloat(value);
+        if (!Number.isFinite(novoValor) || isNaN(dataCompra.getTime())) {
+            return res.status(400).json({ error: "Valor ou data inválidos." });
+        }
+        const _id = new ObjectId(req.params.id);
+        const antigo = await individualCollection.findOne({ _id });
+        if (!antigo) return res.status(404).json({ error: "Gasto não encontrado." });
+
+        const novaRef = { ano: dataCompra.getUTCFullYear(), mes: dataCompra.getUTCMonth() + 1 };
         // Edição é uma correção explícita do usuário: usa o mês da própria data escolhida,
         // sem aplicar o override de "próximo mês" (esse só vale pra lançamentos novos "de agora").
         await individualCollection.updateOne(
-            { _id: new ObjectId(req.params.id) },
+            { _id },
             {
                 $set: {
                     description,
-                    value: parseFloat(value),
+                    value: novoValor,
                     owner,
                     date: dataCompra,
                     dataCompra, // edição manual: a data escolhida passa a ser a data real também
                     category,
-                    anoReferencia: dataCompra.getUTCFullYear(),
-                    mesReferencia: dataCompra.getUTCMonth() + 1,
+                    anoReferencia: novaRef.ano,
+                    mesReferencia: novaRef.mes,
                 }
             }
         );
+
+        // Mantém a Fatura Unique coerente com a edição (valor e/ou mês mudaram)
+        if (gastoSomouNaFatura(antigo)) {
+            const refAntiga = referenciaDoGasto(antigo);
+            if (refAntiga.ano === novaRef.ano && refAntiga.mes === novaRef.mes) {
+                if (novoValor !== antigo.value) await somarFaturaUnique(novaRef.ano, novaRef.mes, novoValor - antigo.value);
+            } else {
+                await somarFaturaUnique(refAntiga.ano, refAntiga.mes, -antigo.value);
+                await somarFaturaUnique(novaRef.ano, novaRef.mes, novoValor);
+            }
+        }
         res.json({ success: true });
     } catch (error) {
+        console.error("Erro ao atualizar gasto:", error);
         res.status(500).json({ error: "Erro ao atualizar" });
+    }
+});
+
+// Divide um gasto lançado como TOTAL em N parcelas mensais (o gasto atual vira a 1/N).
+app.post('/api/individual/:id/parcelar', async (req, res) => {
+    try {
+        const parcelas = parseInt(req.body.parcelas);
+        if (!Number.isInteger(parcelas) || parcelas < 2 || parcelas > 72) {
+            return res.status(400).json({ error: "Informe um número de parcelas entre 2 e 72." });
+        }
+        const doc = await individualCollection.findOne({ _id: new ObjectId(req.params.id) });
+        if (!doc) return res.status(404).json({ error: "Gasto não encontrado." });
+        if (infoParcela(doc)) {
+            return res.status(400).json({ error: "Este gasto já é uma parcela de uma compra parcelada." });
+        }
+        const resultado = await parcelarGasto(doc, parcelas);
+        res.json({ success: true, ...resultado });
+    } catch (error) {
+        console.error("Erro ao parcelar gasto:", error);
+        res.status(500).json({ error: "Erro ao parcelar gasto" });
     }
 });
 
 app.post('/api/individual', async (req, res) => {
     try {
-        const { description, value, owner, date, category } = req.body;
+        const { description, value, owner, date, category, grupoParcelas, parcelaNumero, parcelaTotal } = req.body;
         const dataCompra = new Date(date);
+        const valor = parseFloat(value);
         const referencia = await calcularReferencia(dataCompra);
-        await individualCollection.insertOne({
+        const gasto = {
             description,
-            value: parseFloat(value),
+            value: valor,
             owner,
             date: dataCompra, // O Mongo salvará a data exata escolhida
             category,
+            origem: 'manual',
             ...referencia,
-        });
-        res.status(201).json({ success: true, ...referencia });
+        };
+        // Parcelas lançadas pelo formulário: o grupo liga as parcelas entre si (excluir uma apaga as seguintes)
+        if (grupoParcelas && parseInt(parcelaTotal) > 1) {
+            gasto.grupoParcelas = String(grupoParcelas);
+            gasto.parcelaNumero = parseInt(parcelaNumero);
+            gasto.parcelaTotal = parseInt(parcelaTotal);
+        }
+        const result = await individualCollection.insertOne(gasto);
+
+        // Igual ao chat e ao Santander: todo gasto da Individual soma na "Fatura Unique" do seu mês.
+        const somouNaFatura = await somarFaturaUnique(referencia.anoReferencia, referencia.mesReferencia, valor);
+        await individualCollection.updateOne({ _id: result.insertedId }, { $set: { somouNaFatura } });
+        res.status(201).json({ success: true, somouNaFatura, ...referencia });
     } catch (error) {
+        console.error("Erro ao salvar gasto:", error);
         res.status(500).json({ error: "Erro ao salvar" });
     }
 });
@@ -845,9 +1036,13 @@ app.post('/api/billing-toggle', async (req, res) => {
 
 app.delete('/api/individual/:id', async (req, res) => {
     try {
-        await individualCollection.deleteOne({ _id: new ObjectId(req.params.id) });
-        res.json({ success: true });
+        const doc = await individualCollection.findOne({ _id: new ObjectId(req.params.id) });
+        if (!doc) return res.status(404).json({ error: "Gasto não encontrado." });
+        // Subtrai da Fatura Unique e, se for parcela, apaga também as parcelas seguintes.
+        const resultado = await excluirGastoComParcelas(doc);
+        res.json({ success: true, ...resultado });
     } catch (error) {
+        console.error("Erro ao excluir gasto:", error);
         res.status(500).json({ error: "Erro ao excluir" });
     }
 });
@@ -1142,8 +1337,8 @@ app.post('/api/santander-webhook', express.text({ type: 'text/*' }), async (req,
                 return res.status(200).json({ message: "Cancelamento recebido, mas não achei a compra aprovada correspondente. Marcado pra ignorar se ela chegar depois." });
             }
 
-            await individualCollection.deleteOne({ _id: gasto._id });
-            const descontouDaFatura = await somarFaturaUnique(gasto.anoReferencia, gasto.mesReferencia, -gasto.value);
+            const { deletados, descontado } = await excluirGastoComParcelas(gasto);
+            const descontouDaFatura = descontado !== 0;
             res.status(200).json({
                 message: "Compra cancelada: gasto removido da aba Individual.",
                 removido: { _id: gasto._id, description: gasto.description, value: gasto.value, owner: gasto.owner },
@@ -1199,6 +1394,7 @@ app.post('/api/santander-webhook', express.text({ type: 'text/*' }), async (req,
         const result = await individualCollection.insertOne(gasto);
         // Igual ao chat: todo gasto da Individual soma na despesa "Fatura Unique" da aba Geral.
         const somouNaFatura = await somarFaturaUnique(referencia.anoReferencia, referencia.mesReferencia, valorNumerico);
+        await individualCollection.updateOne({ _id: result.insertedId }, { $set: { somouNaFatura } });
 
         res.status(201).json({
             message: "Gasto do Santander registrado na aba Individual com sucesso!",
@@ -1443,6 +1639,7 @@ app.post('/api/chat/message', async (req, res) => {
                     // Pedido do usuário: todo gasto lançado pelo chat soma automaticamente na
                     // despesa "Fatura Unique" da aba Geral, no mês de referência desse gasto.
                     const somouNaFatura = await somarFaturaUnique(referenciaChat.anoReferencia, referenciaChat.mesReferencia, gasto.value);
+                    await individualCollection.updateOne({ _id: result.insertedId }, { $set: { somouNaFatura } });
 
                     detalhesItens.push({ tipo: 'gasto', _id: result.insertedId, somouNaFatura, ...gasto });
                     linhasResposta.push(`✅ *${description}* — R$ ${gasto.value.toFixed(2).replace('.', ',')} (${categoriaFinal}, ${owner})`
@@ -1459,6 +1656,7 @@ app.post('/api/chat/message', async (req, res) => {
                     }
 
                     const agora = new Date();
+                    const grupoParcelas = new ObjectId().toString(); // liga as parcelas: excluir uma apaga as seguintes
                     const gastosParcelados = [];
                     for (let i = 0; i < installments; i++) {
                         const dataParcela = new Date(agora.getTime());
@@ -1477,6 +1675,7 @@ app.post('/api/chat/message', async (req, res) => {
                             dataCompra: agora, // a compra parcelada real aconteceu uma vez só, nesta data — igual em todas as parcelas
                             origem: 'chat-claude',
                             ...referenciaParcela,
+                            ...(installments > 1 ? { grupoParcelas, parcelaNumero: i + 1, parcelaTotal: installments } : {}),
                         });
                     }
                     const resultParcelado = await individualCollection.insertMany(gastosParcelados);
@@ -1486,6 +1685,7 @@ app.post('/api/chat/message', async (req, res) => {
                     let todasAsParcelasSomaram = true;
                     for (const parcela of gastosParcelados) {
                         const ok = await somarFaturaUnique(parcela.anoReferencia, parcela.mesReferencia, parcela.value);
+                        await individualCollection.updateOne({ _id: parcela._id }, { $set: { somouNaFatura: ok } });
                         if (!ok) todasAsParcelasSomaram = false;
                     }
 

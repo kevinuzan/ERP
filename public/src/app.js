@@ -361,7 +361,18 @@ function openEditInd(id) {
     document.getElementById('ind-date').value = dateObj.toISOString().split('T')[0];
 
     document.getElementById('edit-ind-date').value = dateObj.toISOString().split('T')[0];
+
+    // "Parcelar": só faz sentido num gasto que ainda não é parcela de uma compra parcelada
+    const campoParcelas = document.getElementById('edit-ind-installments-wrap');
+    document.getElementById('edit-ind-installments').value = 1;
+    if (campoParcelas) campoParcelas.classList.toggle('hidden', ehGastoParcelado(item));
+
     document.getElementById('modal-edit-ind').classList.remove('hidden');
+}
+
+// Parcelas novas têm parcelaTotal; as antigas só têm "(2/10)" no fim da descrição.
+function ehGastoParcelado(item) {
+    return (item.parcelaTotal > 1) || /\(\d+\/\d+\)\s*$/.test(item.description || '');
 }
 
 // Salvar a edição com a categoria
@@ -384,8 +395,28 @@ async function saveIndEdit() {
         });
 
         if (response.ok) {
-            closeIndModal();
-            showNotification("Gasto atualizado com sucesso!");
+            // Se pediu parcelas, o valor editado é o TOTAL da compra: divide em N parcelas mensais
+            const parcelas = parseInt(document.getElementById('edit-ind-installments').value) || 1;
+            const campoParcelas = document.getElementById('edit-ind-installments-wrap');
+            const parcelavel = campoParcelas && !campoParcelas.classList.contains('hidden');
+            if (parcelavel && parcelas > 1) {
+                const respParcelar = await fetch(`/api/individual/${id}/parcelar`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ parcelas })
+                });
+                if (!respParcelar.ok) {
+                    showNotification("Gasto salvo, mas não consegui parcelar.", true);
+                    closeIndModal();
+                    loadIndividualData();
+                    return;
+                }
+                closeIndModal();
+                showNotification(`Gasto dividido em ${parcelas} parcelas!`);
+            } else {
+                closeIndModal();
+                showNotification("Gasto atualizado com sucesso!");
+            }
             loadIndividualData(); // Recarrega a tabela e os cards
         }
     } catch (err) {
@@ -1389,9 +1420,30 @@ function changeIndMonth(step) {
 }
 
 async function deleteInd(id) {
-    if (!confirm("Excluir?")) return;
-    await fetch(`/api/individual/${id}`, { method: 'DELETE' });
+    const item = indDataCache.find(i => i._id === id);
+    const parcelado = item && ehGastoParcelado(item);
+    const pergunta = parcelado
+        ? "Este gasto é parcelado. Excluir esta parcela e todas as parcelas seguintes?"
+        : "Excluir?";
+    if (!confirm(pergunta)) return;
+    try {
+        const response = await fetch(`/api/individual/${id}`, { method: 'DELETE' });
+        const resultado = await response.json().catch(() => ({}));
+        if (response.ok && resultado.deletados > 1) {
+            showNotification(`${resultado.deletados} parcelas excluídas.`);
+        }
+    } catch (err) {
+        console.error("Erro ao excluir:", err);
+        showNotification("Erro ao excluir o gasto.", true);
+    }
     loadIndividualData();
+}
+
+// Identifica o grupo de parcelas de uma compra (ligar as parcelas permite excluir as seguintes de uma vez)
+function gerarIdGrupo() {
+    return (window.crypto && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
 }
 
 // 2. Atualize o Listener do Formulário para enviar a data selecionada
@@ -1418,15 +1470,14 @@ document.getElementById('individual-form').addEventListener('submit', async (e) 
     const valuePerInstallment = valuePerPerson / installments;
 
     try {
-        const requests = [];
+        const payloads = [];
 
         // Loop para cada dono selecionado
         selectedOwners.forEach(owner => {
+            // Cada dono tem seu próprio grupo de parcelas
+            const grupoParcelas = installments > 1 ? gerarIdGrupo() : undefined;
             // Loop para cada parcela
             for (let i = 0; i < installments; i++) {
-                // const date = new Date(inputDate + "T12:00:00");
-                // date.setMonth(date.getMonth() + i); // Soma os meses das parcelas
-
                 const [year, month, day] = inputDate.split('-').map(Number);
                 const date = new Date(Date.UTC(year, month - 1, day));
                 // Adicionamos os meses das parcelas
@@ -1438,18 +1489,25 @@ document.getElementById('individual-form').addEventListener('submit', async (e) 
                     category: category,
                     date: date.toISOString()
                 };
-
-                requests.push(
-                    fetch('/api/individual', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    })
-                );
+                if (grupoParcelas) {
+                    payload.grupoParcelas = grupoParcelas;
+                    payload.parcelaNumero = i + 1;
+                    payload.parcelaTotal = installments;
+                }
+                payloads.push(payload);
             }
         });
 
-        await Promise.all(requests);
+        // Um por vez: cada lançamento soma na "Fatura Unique" do seu mês, e fazer isso em paralelo
+        // para o mesmo mês poderia criar a fatura em duplicidade.
+        for (const payload of payloads) {
+            const resp = await fetch('/api/individual', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        }
 
         showNotification(installments > 1
             ? `Compra parcelada em ${installments}x salva com sucesso!`

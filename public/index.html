@@ -519,6 +519,14 @@
                         <option value="Conjunto">Conjunto</option>
                     </select>
 
+                    <div id="edit-ind-installments-wrap" class="flex flex-col gap-1">
+                        <label class="text-[10px] text-gray-400 font-bold uppercase ml-1">Parcelar em (nº de parcelas)</label>
+                        <input type="number" id="edit-ind-installments" min="1" max="72" value="1"
+                            class="border p-2 rounded text-sm">
+                        <p class="text-[10px] text-gray-400 ml-1">Se este gasto foi lançado pelo valor TOTAL, coloque aqui
+                            quantas parcelas ele tem: o valor é dividido e uma parcela é lançada em cada mês seguinte.</p>
+                    </div>
+
                     <div class="flex gap-2 mt-2">
                         <button onclick="saveIndEdit()"
                             class="bg-blue-600 text-white p-2 rounded flex-1 font-bold">Salvar</button>
