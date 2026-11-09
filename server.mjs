@@ -597,25 +597,33 @@ async function calcularOrcamentoMes(y, m) {
     ]).toArray();
     const gasto = agg[0]?.total || 0;
 
-    // Dias restantes (contando hoje): mês atual -> até o último dia; mês futuro -> mês inteiro; mês passado -> null.
+    // Ciclo do orçamento = ciclo da fatura: o mês de referência M vai do dia 26 do mês anterior até o dia 25
+    // de M, e RENOVA todo dia 26 (o mesmo fechamento do cartão, CARD_CLOSING_DAY).
+    // Dias restantes contam hoje até o dia 25 (inclusive). Antes do ciclo começar, vale o ciclo inteiro;
+    // depois que ele encerrou (dia 26 em diante), não há mais dias a contar.
+    const DIA_MS = 24 * 60 * 60 * 1000;
+    const diaRenovacao = CARD_CLOSING_DAY + 1;
+    const inicioCiclo = Date.UTC(y, m - 2, diaRenovacao);     // dia 26 do mês anterior
+    const renovaEm = Date.UTC(y, m - 1, diaRenovacao);        // dia 26 do mês de referência
     const hoje = hojeEmSaoPaulo();
-    const chaveHoje = hoje.getUTCFullYear() * 12 + hoje.getUTCMonth();
-    const chaveMes = y * 12 + (m - 1);
-    const diasNoMes = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const hojeDia = Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth(), hoje.getUTCDate());
     let diasRestantes = null;
+    let emCurso = false;
     let gastoHoje = 0;
-    if (chaveMes === chaveHoje) {
-        diasRestantes = diasNoMes - hoje.getUTCDate() + 1;
-        const inicioHoje = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth(), hoje.getUTCDate(), 3)); // 00:00 em Brasília
-        const fimHoje = new Date(inicioHoje.getTime() + 24 * 60 * 60 * 1000);
+    if (hojeDia < inicioCiclo) {
+        diasRestantes = Math.round((renovaEm - inicioCiclo) / DIA_MS);
+    } else if (hojeDia < renovaEm) {
+        emCurso = true;
+        diasRestantes = Math.round((renovaEm - hojeDia) / DIA_MS);
+        const inicioHoje = new Date(hojeDia + 3 * 60 * 60 * 1000); // 00:00 em Brasília
+        const fimHoje = new Date(inicioHoje.getTime() + DIA_MS);
         const aggHoje = await individualCollection.aggregate([
             { $match: { ...filtroMes, dataCompra: { $gte: inicioHoje, $lt: fimHoje } } },
             { $group: { _id: null, total: { $sum: "$value" } } },
         ]).toArray();
         gastoHoje = aggHoje[0]?.total || 0;
-    } else if (chaveMes > chaveHoje) {
-        diasRestantes = diasNoMes;
     }
+    const iso = ms => new Date(ms).toISOString().slice(0, 10);
 
     const orcamento = saldo + gasto; // quanto estava disponível antes desses gastos
     const r2 = n => Math.round(n * 100) / 100;
@@ -629,6 +637,10 @@ async function calcularOrcamentoMes(y, m) {
         percentual: orcamento > 0 ? Math.round((gasto / orcamento) * 1000) / 10 : null,
         diasRestantes,
         gastoDiarioSugerido: diasRestantes && saldo > 0 ? r2(saldo / diasRestantes) : null,
+        cicloInicio: iso(inicioCiclo),               // primeiro dia do ciclo (dia 26)
+        cicloFim: iso(renovaEm - DIA_MS),            // último dia do ciclo (dia 25)
+        cicloEmCurso: emCurso,
+        cicloEncerrado: hojeDia >= renovaEm,
     };
 }
 
@@ -642,7 +654,15 @@ app.get('/api/budget-status', async (req, res) => {
         return res.status(400).json({ error: "Parâmetros 'year' e 'month' (numéricos) são obrigatórios." });
     }
     try {
-        res.json(await calcularOrcamentoMes(y, m));
+        let orcamento = await calcularOrcamentoMes(y, m);
+        // auto=1 (card da aba Individual): no dia 26 o ciclo renova. Se o ciclo do mês pedido acabou de
+        // encerrar, mostra o ciclo seguinte, que é o que está valendo hoje.
+        if (req.query.auto === '1' && orcamento.cicloEncerrado) {
+            const prox = avancarReferencia(y, m, 1);
+            const seguinte = await calcularOrcamentoMes(prox.anoReferencia, prox.mesReferencia);
+            if (seguinte.cicloEmCurso) orcamento = { ...seguinte, cicloAvancado: true };
+        }
+        res.json(orcamento);
     } catch (error) {
         console.error("Erro ao calcular orçamento do mês:", error);
         res.status(500).json({ error: "Erro ao calcular orçamento do mês." });
@@ -696,7 +716,8 @@ async function notificarOrcamentoPush({ cancelada, descricao, valor, owner, ano,
             linhas.push(`Déficit de ${fmtBRL(Math.abs(o.saldo))} no mês`);
         } else if (o.diasRestantes) {
             const dias = o.diasRestantes === 1 ? '1 dia' : `${o.diasRestantes} dias`;
-            linhas.push(`Restam ${fmtBRL(o.saldo)} para ${dias}`
+            const ate = o.cicloFim ? ` (até ${o.cicloFim.slice(8, 10)}/${o.cicloFim.slice(5, 7)})` : '';
+            linhas.push(`Restam ${fmtBRL(o.saldo)} para ${dias}${ate}`
                 + (o.gastoDiarioSugerido !== null ? ` → ${fmtBRL(o.gastoDiarioSugerido)} por dia` : ''));
         } else {
             linhas.push(`Sobraram ${fmtBRL(o.saldo)} no mês`);

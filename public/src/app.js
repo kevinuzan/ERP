@@ -978,9 +978,14 @@ async function carregarOrcamento() {
     try {
         const mes = indCurrentDate.getMonth() + 1;
         const ano = indCurrentDate.getFullYear();
-        const response = await fetch(`/api/budget-status?year=${ano}&month=${mes}`);
+        // auto=1: no dia 26 o ciclo renova; se o ciclo do mês exibido já acabou, o servidor devolve o ciclo vigente.
+        const response = await fetch(`/api/budget-status?year=${ano}&month=${mes}&auto=1`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const d = await response.json();
+
+        // "2026-11-25" -> "25/11"
+        const diaMes = iso => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+        const periodo = (d.cicloInicio && d.cicloFim) ? `${diaMes(d.cicloInicio)} a ${diaMes(d.cicloFim)}` : '';
 
         const pct = d.percentual;
         const cor = pct === null || pct >= 80 ? '#dc2626' : (pct >= 50 ? '#f59e0b' : '#16a34a');
@@ -989,21 +994,25 @@ async function carregarOrcamento() {
 
         let linhaRestante;
         if (d.saldo < 0) {
-            linhaRestante = `<span style="color:#dc2626;font-weight:700">Déficit de ${formatCurrency(Math.abs(d.saldo))}</span> — o mês já passou do que estava disponível.`;
+            linhaRestante = `<span style="color:#dc2626;font-weight:700">Déficit de ${formatCurrency(Math.abs(d.saldo))}</span> — o ciclo já passou do que estava disponível.`;
         } else if (d.diasRestantes) {
             const dias = d.diasRestantes === 1 ? '1 dia' : `${d.diasRestantes} dias`;
-            linhaRestante = `Restam <b>${formatCurrency(d.saldo)}</b> para ${dias}`
+            linhaRestante = `Restam <b>${formatCurrency(d.saldo)}</b> para ${dias} (até ${diaMes(d.cicloFim)})`
                 + (d.gastoDiarioSugerido !== null ? ` → <b>${formatCurrency(d.gastoDiarioSugerido)}</b> por dia.` : '.');
         } else {
-            linhaRestante = `Sobraram <b>${formatCurrency(d.saldo)}</b> no mês.`;
+            linhaRestante = `Ciclo encerrado em ${diaMes(d.cicloFim)}. Sobraram <b>${formatCurrency(d.saldo)}</b>.`;
         }
 
         const linhaHoje = (d.diasRestantes && d.gastoHoje > 0 && d.gastoDiarioSugerido !== null)
             ? `<p class="text-xs text-gray-500 mt-1">Hoje você já gastou ${formatCurrency(d.gastoHoje)}.</p>`
             : '';
+        const linhaNovoCiclo = d.cicloAvancado
+            ? `<p class="text-xs text-gray-500 mb-1">🔄 Novo ciclo iniciado em ${diaMes(d.cicloInicio)}.</p>`
+            : '';
 
         card.innerHTML = `
-            <h3 class="text-xs font-bold text-gray-400 uppercase mb-2">💰 Orçamento do mês</h3>
+            <h3 class="text-xs font-bold text-gray-400 uppercase mb-2">💰 Orçamento do ciclo${periodo ? ` · ${periodo}` : ''}</h3>
+            ${linhaNovoCiclo}
             <p class="text-sm">Você já gastou <b>${formatCurrency(d.gasto)}</b>${pctTexto}.</p>
             <div class="relative w-full h-3 bg-gray-100 rounded-full overflow-hidden my-2">
                 <div style="width:${larguraBarra}%;background:${cor};height:100%;border-radius:9999px;transition:width .4s"></div>
@@ -1012,10 +1021,10 @@ async function carregarOrcamento() {
             </div>
             <p class="text-sm">${linhaRestante}</p>
             ${linhaHoje}
-            <p class="text-[10px] text-gray-400 mt-2">Considera os gastos lançados pelo chat e pelas notificações do Santander. Disponível = Sobra / Déficit da aba Geral.</p>`;
+            <p class="text-[10px] text-gray-400 mt-2">O ciclo renova todo dia 26. Considera os gastos lançados pelo chat, pelo formulário e pelas notificações do Santander. Disponível = Sobra / Déficit da aba Geral.</p>`;
         card.classList.remove('hidden');
     } catch (e) {
-        console.error('Erro ao carregar orçamento do mês:', e);
+        console.error('Erro ao carregar orçamento do ciclo:', e);
         card.classList.add('hidden');
     }
 }
